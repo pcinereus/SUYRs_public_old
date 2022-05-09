@@ -1,0 +1,630 @@
+---
+title: "GAM Part2"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../public/resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../public/resources/references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, mesage=FALSE)
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE, warning=TRUE, message=FALSE}
+library(mgcv)      #for GAMs
+library(gratia)    #for GAM plots
+library(broom)     #for tidy output#
+library(emmeans)   #for marginal means etc
+library(MuMIn)     #for model selection and AICc
+library(tidyverse) #for data wrangling
+library(DHARMa)    #for simulated residuals
+library(performance) #for residual disagnostics
+library(see)        # to visualize residual diagnostics
+```
+ 
+# Scenario
+
+In a chapter on time series analysis, @Reed-2007-2007 presented Hawaiian longitudinal waterbird survey data.  These data comprise
+winter counts of various species of stilts, coots and moorehen along with year and the previous seasons rainfall.  Here, we will
+explore the temporal patterns in the Kauai Moorhen.
+
+![Moorhen](../public/resources/moorhen.jpg){width="251" height="290"}
+
+Format of reed.csv data file
+
+Year Stilt.Oahu Stilt.Maui Coot.Oahu Coot.Maui Moorhen.Kauai Rainfall
+---- ---------- ---------- --------- --------- ------------- --------
+1956 163        169        528       177       2             15.16
+1957 272        190        338       273       NA            15.48
+1958 549        159        449       256       2             16.26
+1959 533        211        822       170       10            21.25
+1960 NA         232        NA        188       4             10.94
+1961 134        155        717       149       10           19.93
+
+--------------    ---------------------------------------------------
+**Year**          - a continuous predictor
+**Stilt.Oahu**    - the abundance of the Oahu stilt
+**Stilt.Maui**    - the abundance of the Maui stilt 
+**Coot.Oahu**     - the abundance of the Oahu coot 
+**Coot.Maui**     - the abundance of the Maui coot
+**Moorhen.Kauai** - the abundance of the Kauai moorhen
+**Rainfal**       - the number of centimeters (or inches) of rain
+--------------    ---------------------------------------------------
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+reed = read_csv('../public/data/reed.csv', trim_ws=TRUE)
+glimpse(reed)
+```
+
+# Exploratory data analysis
+
+Model formula:
+$$
+y_i \sim{} \mathcal{Pois}(\lambda_i)\\
+log(\lambda_i) =\beta_0 + f(Year_i) + f(Rainfall_i)
+$$
+
+where $\beta_0$ is the y-intercept. $f(Year)$ and $f(Rainfall)$ indicate the additive smoothing functions of Year and Rainfall respectively. 
+
+<div class='HIDDEN'>
+
+We begin with a simple scatterplot of the response (Moorhen.Kauai counts)
+against our main predictor (Year).
+
+```{r EDA1a, results='markdown', eval=TRUE, hidden=TRUE, warning=FALSE, message=FALSE}
+ggplot(reed, aes(y=Moorhen.Kauai, x=Year)) +
+    geom_point()
+```
+
+**Conclusions:**
+
+- it is clear that moorhen abundances have increased over time, however, this
+  increase does not appear linear to be. 
+- as might be expected for count data, as the mean increases, so does the variance.
+
+We could put a loess smoother through these data, however, a loess smoother will
+assume a Gaussian distribution.  We could alternatively, explore a GAM smoother
+with a Poisson distribution.  Keep in mind, that whilst this will use GAM in the
+backend, it will not do all the critical assumption checking and thus is useful
+as an exploratory data analysis routine only.
+
+```{r EDA1b, results='markdown', eval=TRUE, hidden=TRUE, warning=FALSE, message=FALSE}
+ggplot(reed, aes(y=Moorhen.Kauai, x=Year)) +
+    geom_point() +
+    geom_smooth(method='gam', formula=y~s(x),
+                method.args=list(family='poisson'))
+```
+
+We can also do a similar thing for Rainfall.
+
+```{r EDA1c, results='markdown', eval=TRUE, hidden=TRUE, warning=FALSE, message=FALSE}
+ggplot(reed, aes(y=Moorhen.Kauai, x=Rainfall)) +
+    geom_point() +
+    geom_smooth(method='gam', formula=y~s(x),
+                method.args=list(family='poisson'))
+
+```
+
+</div>
+
+# Refit and validate models {.tabset .tabset}
+
+<div class='HIDDEN'>
+
+## basis functions
+
+As we did in the previous example, it might be informative to start off by
+exploring the spline formulation.   This time, we will explore both thin-plate
+and cubic regression.
+
+```{r basis, results='markdown', eval=TRUE, hidden=TRUE, error = TRUE}
+basis(s(Year, bs='tp'),  data=reed) %>% draw
+basis(s(Year, bs='cr'),  data=reed) %>% draw
+```
+
+## Model 1 {.tabset .tabset-pills}
+
+### Fit model
+```{r fitModel1a, results='markdown', eval=TRUE, hidden=TRUE}
+reed.gam1 <- gam(Moorhen.Kauai ~ s(Year, bs = 'cr') +
+                     s(Rainfall, bs = 'cr'),
+                 data = reed,
+                 family = poisson(link = 'log'),
+                 method = 'REML')
+reed.gam1a <- gam(Moorhen.Kauai ~ s(Year, bs = 'cr') +
+                     s(Rainfall, bs = 'cr'),
+                 data = reed,
+                 family = poisson(link = 'log'),
+                 method = 'REML',
+                 select=TRUE)
+```
+
+### Model validation {.tabset .tabset-faded}
+
+```{r modelValidation1a, results='markdown', eval=TRUE, hidden=TRUE}
+k.check(reed.gam1)
+```
+
+**Conclusions:**
+
+- the k-index for the smoother for year is less than one 
+  (r round(k.check(reed.gam1)[1,3],2)), the associated p-value is small and the
+  estimated degree of freedom (`r round(k.check(reed.gam1), 2)[1, 2]`) is nearly
+  as large as k', suggesting that the initial starting number of knots was too
+  low.  An optimum was not yet reached.
+- we should refit the model with double k (e.g. k=20)
+
+```{r modelValidation1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+appraise(reed.gam1)
+```
+
+**Conclusions:**
+
+- the Q-Q plot does not look very good, however the other diagnostics are ok.
+- nevertheless, k checking has already highlighted an issue of potential
+  oversmoothing that should be addressed first.
+
+
+## Model 2 {.tabset .tabset-pills}
+
+
+
+### fit model
+```{r fitModel2a, results='markdown', eval=TRUE, hidden=TRUE}
+reed.gam2 = gam(Moorhen.Kauai ~ s(Year, k = 20, bs = 'cr') +
+                    s(Rainfall, bs = 'cr'),
+                data = reed,
+                family = poisson(link = 'log'),
+                method = 'REML')
+```
+
+### Model validation {.tabset .tabset-faded}
+
+```{r modelValidation2a, results='markdown', eval=TRUE, hidden=TRUE}
+k.check(reed.gam2)
+```
+
+**Conclusions:**
+
+- the k-index for the smoother for year is now greater than 1
+  (r round(k.check(reed.gam2)[1,3],2)), the associated p-value is large and the
+  estimated degree of freedom (`r round(k.check(reed.gam2), 2)[1, 2]`) is
+  sufficiently smaller than k', suggesting that the new starting number of knots
+  is high enough to allow an optimum to be reached.
+
+
+```{r modelValidation2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7}
+appraise(reed.gam2)
+```
+
+**Conclusions:**
+
+- the Q-Q plot does not look very good, however the other diagnostics are ok.
+
+
+```{r modelValidation2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+concurvity(reed.gam2)
+```
+
+**Conclusions:**
+
+- other than the worst case senario (which tends to be overly pessimistic), the
+  correlations between the smoothers are not overly high.
+- indeed, the correlation estimates for the 'estimate' are all below 0.6, hence
+  it is unlikely there is a colliniarity (concurvity) issue.
+
+```{r modelValidation2d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7, message=FALSE, warning=FALSE, error = TRUE}
+performance::check_model(reed.gam2)
+```
+
+**Conclusions:**
+
+- ignore colliniarity
+- the Q-Q plot is not fantastic
+- there is one overly influential residual
+
+```{r modelValidation2e, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+reed.resids <- simulateResiduals(reed.gam2,  plot=TRUE)
+testZeroInflation(reed.resids)
+```
+
+**Conclusions:**
+
+- there is clearly an issue with dispersion - probably overdispersion
+- there is no evidence of zero inflation
+- perhaps we should explore a negative binomial model
+
+## Model 3 {.tabset .tabset-pills}
+
+### fit model
+
+In mgcv,  there are two methods for fitting negative binomial:
+
+1. using the nb() function.  This method estiates the dispersion parameter (theta)
+   as part of the likelihood.  Unfortunately,  DHARMa is not compatible with
+   mgcv's version.
+2. using the negbin() function and supplying theta.  This approach does support
+   DHARMa residuals.
+   
+```{r fitModel3, results='markdown', eval=TRUE, hidden=TRUE}
+reed.gam3 <- gam(Moorhen.Kauai ~ s(Year, k = 20, bs = 'cr') +
+                   s(Rainfall, bs = 'cr'),
+                data = reed,
+                family = nb(link = 'log'),
+                method = 'REML')
+## get the final theta estimate
+(theta <- reed.gam3$family$getTheta(TRUE))
+## or with supplied theta
+reed.gam3 = gam(Moorhen.Kauai ~ s(Year, k = 20, bs = 'cr') +
+                    s(Rainfall, bs = 'cr'),
+                data = reed,
+                family = negbin(link = 'log', theta = theta),
+                method = 'REML')
+```
+
+### model validation
+
+```{r modelValidation3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7}
+k.check(reed.gam3)
+```
+
+```{r modelValidation3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+appraise(reed.gam3)
+```
+
+```{r modelValidation3c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+concurvity(reed.gam3)
+```
+
+```{r modelValidation3d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7, message=FALSE, warning=FALSE, error = TRUE}
+performance::check_model(reed.gam3)
+```
+
+```{r modelValidation3e, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+reed.resids <- simulateResiduals(reed.gam3,  plot=TRUE)
+testZeroInflation(reed.resids)
+```
+
+
+```{r modelValidation3f, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+testTemporalAutocorrelation(reed.resids, time=reed.gam3$model$Year)
+# OR
+Year = reed %>%
+  filter(!is.na(Moorhen.Kauai)) %>%
+  pull(Year)
+testTemporalAutocorrelation(reed.resids, time=Year)
+```
+
+```{r ACF, results='markdown', eval=TRUE, hidden=TRUE}
+plot(acf(residuals(reed.gam3,type='pearson')))
+```
+
+</div>
+
+# Partial plots {.tabset .tabset-faded}
+
+## draw
+
+```{r partialPlot1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+draw(reed.gam3)
+draw(reed.gam3, residuals = TRUE, scales = 'free') 
+```
+
+## plot
+
+```{r partialPlot1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+#plot(reed.gam3, pages=1)
+#plot(reed.gam3, pages=1, shift=coef(reed.gam3)[1])
+#plot(reed.gam3, pages=1, shift=coef(reed.gam3)[1], scale=0)
+plot(reed.gam3, pages=1, shift=coef(reed.gam3)[1], trans=exp,
+     resid=TRUE, cex=4, scale=0)
+```
+
+
+
+# Model investigation / hypothesis testing {.tabset .tabset-faded}
+
+## summary
+
+```{r modelSummary1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+summary(reed.gam3)
+```
+
+**Conclusions:**
+
+- the average number of Moorhen is `r round(summary(reed.gam3)$p.table[1, 1],2)`
+  on the link scale or `r round(exp(summary(reed.gam3)$p.table[1, 1]),2)` on the
+  response scale. This number corresponds to the average number of Moorhens
+  expected for the average year with the average rainfall.
+- there is evidence of a signficantly wiggly change in Moorhen numbers over
+  time.
+- there is no evidence of a wiggly rainfall trend
+- we might consider dropping the smoother for rainfall in preference for a
+  regular linear parametric term.
+
+## tidy
+ 
+```{r modelSummary1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+tidy(reed.gam3)
+```
+
+**Conclusions:**
+
+- the average number of Moorhen is `r round(summary(reed.gam3)$p.table[1, 1],2)`
+  on the link scale or `r round(exp(summary(reed.gam3)$p.table[1, 1]),2)` on the
+  response scale. This number corresponds to the average number of Moorhens
+  expected for the average year with the average rainfall.
+- there is evidence of a signficantly wiggly change in Moorhen numbers over
+  time.
+- there is no evidence of a wiggly rainfall trend
+- we might consider dropping the smoother for rainfall in preference for a
+  regular linear parametric term.
+
+# Further modelling {.tabset .tabset-faded} 
+
+<div class='HIDDEN'>
+
+## Rainfall as parameteric term {.tabset .tabset-pills}
+
+### fit model
+
+```{r fitModel4a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+reed.gam4 <- gam(Moorhen.Kauai ~ s(Year, k = 20, bs = 'cr') +
+                    Rainfall,
+                data = reed,
+                family = nb(link = 'log'),
+                method = 'REML')
+(theta <- reed.gam4$family$getTheta(TRUE))
+reed.gam4 <- gam(Moorhen.Kauai ~ s(Year, k = 20, bs = 'cr') +
+                     Rainfall,
+                 data = reed,
+                 family = negbin(link = 'log', theta = theta),
+                 method = 'REML')
+AICc(reed.gam3,  reed.gam4)
+```
+
+**Conclusions:**
+
+- the AIC for the model incorporating the simpler parametric Rainfall term has a
+  lower AICc and fewer consumed degrees of freedom and is thus preferred. 
+
+### validate model
+
+```{r fitModel4b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+k.check(reed.gam4)
+appraise(reed.gam4)
+```
+
+**Conclusions:**
+
+- the model is still valid
+
+```{r fitModel4c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+reed.resid <- simulateResiduals(reed.gam4,  plot=TRUE)
+testDispersion(reed.resid)
+testZeroInflation(reed.resid)
+
+testTemporalAutocorrelation(reed.resid, time=reed.gam4$model$Year)
+Year = reed %>%
+  filter(!is.na(Moorhen.Kauai)) %>%
+  pull(Year)
+testTemporalAutocorrelation(reed.resid, time=Year)
+```
+
+**Conclusions:**
+
+- the model is still valid
+
+### summarise model
+
+```{r fitModel4d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+summary(reed.gam4)
+```
+
+## Without Rainfall {.tabset .tabset-pills}
+
+### fit model
+
+```{r fitModel5a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+reed.gam5 <- gam(Moorhen.Kauai ~ s(Year, k = 20, bs = 'cr'), 
+                data = reed,
+                family = nb(link = 'log'),
+                method = 'REML')
+(theta=reed.gam5$family$getTheta(TRUE))
+reed.gam5 <- gam(Moorhen.Kauai ~ s(Year, k = 20, bs = 'cr'), 
+                 data = reed,
+                 family = negbin(link = 'log', theta = theta),
+                 method = 'REML')
+AICc(reed.gam3,  reed.gam4,  reed.gam5)
+```
+
+**Conclusions:**
+
+- the AIC for the model that does not include Rainfall at all has the
+  lowest AICc and fewest consumed degrees of freedom and is thus preferred. 
+
+### validate model
+
+```{r fitModel5b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+k.check(reed.gam5)
+appraise(reed.gam5)
+```
+
+**Conclusions:**
+
+- the model is still valid
+
+```{r fitModel5c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+reed.resid <- simulateResiduals(reed.gam5,  plot=TRUE)
+testDispersion(reed.resid)
+testZeroInflation(reed.resid)
+Year = reed %>%
+  filter(!is.na(Moorhen.Kauai)) %>%
+  pull(Year)
+testTemporalAutocorrelation(reed.resid, time=Year)
+```
+
+**Conclusions:**
+
+- the model is still valid
+
+### summarise model
+
+```{r fitModel5d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+summary(reed.gam5)
+```
+
+**Conclusions:**
+
+- there is evidence of a wiggly trend in Moorhen population size over time.
+- plotting this trend will help in the interpretation.
+
+
+</div>
+
+
+# Summary figures {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+Whether we chose to display the trends from the model with a smoother for year
+and a smoother for rainfall (Model 3) or just the model that has the temporal smoother
+(Model 5), we would probably only be interested in the temporal trends (since
+the rainfall trends are not significant).  Hence, we will only produce the
+temporal trends.
+
+## Model with both smoothers (Model 3)
+
+```{r summaryFigure1a, results='markdown', eval=TRUE, hidden=TRUE}
+reed.list <- with(reed, list(Year = modelr::seq_range(Year, n=100)))
+newdata <- emmeans(reed.gam3, ~Year, at = reed.list, type = 'response') %>%
+    as.data.frame
+head(newdata)
+ggplot(newdata, aes(y = response, x = Year)) +
+    geom_ribbon(aes(ymin = lower.CL, ymax = upper.CL), fill = 'blue', alpha = 0.3) +
+    geom_line() +
+    theme_bw()
+```
+
+We might also want to display the observed values.  When there are multiple
+smoothers, displaying the raw data alongside the modelled trend can be very
+misleading.  This is because whilst the modelled trend illustrates the estimated
+trend of one predictor holding all other predictors constant (and thus
+standardising over these other predictors), the raw observations will not be
+similarly standardised.  As a result, the modelled trend may appear inconsistent
+with the raw observations.
+
+It is therefore better to calcualte partial residuals.  For each of the observed
+values of the focal predictor, we calculate the fitted value to which we then
+add the residuals.  The result are the equivalent of the observed values that
+have been standardised by the other predictors and these are more consistent
+with what the model actually saw.
+
+In the following, we will calculate the partial residuals and add them (black
+points) to the temporal trends along with the raw observed values (red).  We
+would of course not normally add the raw observed values, but here it helps to
+see what impact the standardisation has.
+
+```{r summaryFigure1b, results='markdown', eval=TRUE, hidden=TRUE}
+reed.obs <- with(reed.gam3$model,
+                 data.frame(Year = Year,
+                            Rainfall = mean(Rainfall))) %>%
+    mutate(Pred = predict(reed.gam3, newdata=., type='link'),
+           Resid = reed.gam3$residuals,
+           Presid = exp(Pred + Resid))
+    
+## reed.presid <- data.frame(Year = reed.gam3$model$Year,
+##                           Rainfall = mean(reed.gam3$model$Rainfall)) %>%
+##     mutate(Pred = predict(reed.gam3, newdata=., type='link'),
+##            Resid = reed.gam3$residuals,
+##            Presid = exp(Pred + Resid))
+head(reed.obs)
+ggplot(newdata, aes(y=response, x=Year)) +
+    geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), fill='blue', alpha=0.3) +
+    geom_line() +
+  geom_point(data=reed.obs, aes(y=Presid)) +
+  geom_point(data=reed, aes(y = Moorhen.Kauai, x=Year), color='red')
+```
+
+**Conclusions:**
+
+- The Moorhen population has increased over time.
+- However, it has clearly not increased in a consistent manner
+- the population seems to go through cycles of rapid expansion followed by some
+  decline and since the decline does not match the expansion, the population
+  has ratchetted up in size.
+- the Moorhen population is currently in decline (having peaked in 1995), yet
+  might be expected to begin increasing again in the near future.
+
+## Model with only temporal smoother (Model 5)
+
+In this case, as there is only a single predictor, it is fine to use the raw
+observed values in the plot.
+
+```{r summaryFigure2a, results='markdown', eval=TRUE, hidden=TRUE}
+reed.list= with(reed, list(Year=seq(min(Year), max(Year), len=100)))
+
+newdata = emmeans(reed.gam5, ~Year, at=reed.list, type='response') %>%
+    as.data.frame
+head(newdata)
+ggplot(newdata, aes(y=response, x=Year)) +
+    geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), fill='blue', alpha=0.3) +
+    geom_line() +
+    theme_bw() +
+    geom_point(data=reed, aes(y = Moorhen.Kauai, x=Year))
+```
+
+**Conclusions:**
+
+- The Moorhen population has increased over time.
+- However, it has clearly not increased in a consistent manner
+- the population seems to go through cycles of rapid expansion followed by some
+  decline and since the decline does not match the expansion, the population
+  has ratchetted up in size.
+- the Moorhen population is currently in decline (having peaked in 1995), yet
+  might be expected to begin increasing again in the near future.
+  
+</div>
+
+# References 

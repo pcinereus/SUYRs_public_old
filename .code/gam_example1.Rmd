@@ -1,0 +1,601 @@
+---
+title: "GAM Part1"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../public/resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../public/resources/references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE, warning=TRUE, message=FALSE}
+library(mgcv)      #for GAMs
+library(broom)     #for tidy results
+library(gratia)    #for GAM plots
+library(DHARMa)    #for residual diagnostics
+library(performance) #for residuals diagnostics
+library(see)         #for plotting residuals
+library(emmeans)   #for marginal means etc
+library(MuMIn)     #for model selection and AICc
+library(tidyverse) #for data wrangling
+```
+
+# Scenario
+
+This is an entirely fabricated example (how embarrising).
+So here is a picture of some Red Grouse Chicks to compensate..
+
+![Red grouse chicks](../public/resources/redgrousechicks.jpg){width="251" height="290"}
+
+Format of data.gp.csv data file
+
+x  y
+-- --
+2  3
+4  5
+8  6
+10 7
+14 4
+
+------    -----------------------------
+**x**     - a continuous predictor
+**y**     - a continuous response
+------    -----------------------------
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+data_gam = read_csv('../public/data/data_gam.csv', trim_ws=TRUE)
+glimpse(data_gam)
+```
+
+
+# Exploratory data analysis
+
+Model formula:
+$$
+y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
+\mu_i =\beta_0 + f(x_i)\\
+f(x_i) = \sum^k_{j=1}{b_j(x_i)\beta_j}
+$$
+
+where $\beta_0$ is the y-intercept, and $f(x)$ indicates an additive smoothing function of $x$. 
+
+<div class = 'HIDDEN'>
+
+Although this is a ficticious example without a clear backstory, given that
+there are two continous predictors (and that one of these has been identified as
+a response and the other a predictor), we can assume that we might be interested
+in investigating the relationship between the two.
+As such, our typically starting point is to explore the basic trend between the
+two using a scatterplot.
+
+```{r EDA1a, results='markdown', eval=TRUE, hidden=TRUE}
+ggplot(data_gam, aes(y=y, x=x))+ 
+    geom_point()+
+    geom_line()
+```
+
+This does not look like a particularly linear relationship.  Lets fit a loess smoother..
+
+```{r EDA1b, results='markdown', eval=TRUE, hidden=TRUE,warning=FALSE,message=FALSE}
+ggplot(data_gam, aes(y=y, x=x))+ 
+    geom_point()+
+    geom_smooth()
+```
+
+And what would a linear smoother look like?
+
+```{r EDA1c, results='markdown', eval=TRUE, hidden=TRUE,warning=FALSE,message=FALSE}
+ggplot(data_gam, aes(y=y, x=x))+ 
+    geom_point()+
+    geom_smooth(method='lm')
+```
+
+Rather than either a loess or linear smoother, we can also try a Generalized
+Additive Model (GAM) smoother. Dont pay too much attention to the GAM formula at
+this stage, this will be discussed later in the Model Fitting section.
+
+```{r EDA1d, results='markdown', eval=TRUE, hidden=TRUE}
+ggplot(data_gam, aes(y=y, x=x))+ 
+    geom_point()+
+    geom_smooth(method='gam', formula=y~s(x,k=3))
+```
+
+**Conclusions:**
+
+- it is clear that the relationship is not linear.
+- it does appear that as x inreases, y initially increases before eventually
+  declining again.
+- we could model this with a polynomial, but for this exemple, we will use these
+  data to illustrate the fitting of GAMs.
+
+</div>
+
+# Fit the model
+
+<div class='HIDDEN'>
+Prior to fitting the GAM, it might be worth gaining a bit of an understanding of
+what will occur behind the scenes.
+
+Lets say we intended to fit a smoother with three knots.  The three knots equate
+to one at each end of the trend and one in the middle.  We could reexpress our
+predictor (x) as three dummy variables that collectively reflect a spline (in
+this case, potentially two joined polynomials).
+
+
+```{r fitModel1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=4, fig.height=4}
+data.frame(smoothCon(s(x, k=3),  data=data_gam)[[1]]$X) %>%
+  bind_cols(data_gam)
+```
+
+And we could visualize these dummies as three separate components.
+
+```{r fitModel2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=4, fig.height=4}
+basis(s(x, k=3),  data=data_gam) %>% draw
+basis(s(x, k=3, bs='cr'),  data=data_gam) %>% draw
+```
+
+OR
+
+```{r fitModel3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=4, fig.height=4}
+newdata <-
+    data.frame(smoothCon(s(x, k=3),  data=data_gam)[[1]]$X) %>%
+    bind_cols(data_gam)
+ggplot(newdata,  aes(x=x)) +
+    geom_line(aes(y=X1)) +
+    geom_line(aes(y=X2)) +
+    geom_line(aes(y=X3))
+```
+
+So with that in mind, lets fit the GAM.
+
+```{r fitModel14, results='markdown', eval=TRUE, hidden=TRUE,error=TRUE}
+data_gam.gam <- gam(y~s(x), data = data_gam, method = 'REML')
+```
+
+**Conclusions:**
+
+- this error indicates that there is not enough data to fit the starting number
+  of knots (10) attempted.
+- in order to fit a GAM, we will need to reduce the maximum number of knots.  We
+  will set this to 3 and try fitting again.
+
+We will optimise the degree of smoothing via REML. 
+
+```{r fitModel15, results='markdown', eval=TRUE, hidden=TRUE}
+data_gam.gam <- gam(y~s(x, k = 3), data=data_gam, method = 'REML')
+#data.gp.gam <- gam(y~s(x,k=3, bs='cr'), data=data.gp, method=)
+#data.gp.gam <- gam(y~s(x,k=3, bs='ps'), data=data.gp)
+```
+
+
+</div>
+
+# Model validation {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## gam.check
+
+```{r modelValidation1a, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+gam.check(data_gam.gam, pch = 19)
+```
+
+**Conclusions:**
+
+- the outputs provide diagnostics.  GAMS tend to be more sensitive to
+  distributional assumptions than regular GLM.  Furthermore, it is important to
+  test whether the basis dimensions (a max of k in this case) is too small -
+  this could lead to oversmoothing.
+- starting with the graphical outputs:
+  - the top left figure illustrates a Q-Q like plot.  We are looking to see that
+    the points fall along the straight diagonal line.  In this case, it is not
+    fantastic, yet this analysis is based on only a very small amount of data.
+  - the top right figure is a residual plot.  As always, we want this to be
+    random noise.  Again given the small sample size here, little can be said.
+  - the bottom left figure is a density distribution of the residuals.  This
+    should follow a normal distribution - and kind of does.
+  - the bottom right figure is a plot of the observed values against the fitted
+    values.  Ideally, this should be a straight line.  The tighter the cloud of
+    points, the better the model is able to recreate the training data.
+- now for the terminal outputs:
+  - k' (2.00) indicates the number of knots minus 1 (=degrees of freedom).
+  - edf (1.95) indicates the estimated degrees of freedom.  This is the
+    optimized degrees of freedom (number of knots) after penalizing for
+    complexity. The penalizing is why the estimated degrees of freedom is not an
+    integer.
+  - the k-index (2.19) is calculated as the difference in residuals (for values
+    that are near neighbours) divided by the residual variance.  The smaller the
+    k-index is below 1, the more likely it is that there is a missed pattern and
+    the model is oversmoothed.
+  - the p-value, which is calculated by randomly re-shuffling the residuals and
+    repeatedly calculating the k-index, provides a test for whether the basis
+    dimension (k) has been set too low.
+  - if the p-value is low and k-index is less than 1 (especially is edf is close
+    to k'), it suggests that k has been set too low.  This is not that case
+    here.
+  - if the above test had suggested that k was too low, it is generally
+    recommended that you double k and re-fit the model.  
+
+## k.check
+
+The `k.check()` function provides a more targetted summary of the `gam.check()` output.
+```{r modelValidation1b, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+k.check(data_gam.gam)
+```
+
+**Conclusions:**
+
+- see the conclusions from gam.check above.
+
+## appraise
+
+The `appraise()` function provides the graphical diagnostics in `ggplot`.
+
+```{r modelValidation1c, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+appraise(data_gam.gam)
+```
+
+**Conclusions:**
+
+- see the conclusions from gam.check above.
+
+## check_model
+
+```{r modelValidation1d, results='markdown', error=TRUE,eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE, warning=FALSE, message=FALSE}
+performance::check_model(data_gam.gam)
+```
+
+**Conclusions:**
+
+- the top left figure is a Q-Q plot.
+- the top right figure compares the density distribution of the actual residuals
+  to a normal distribution.  In this case the match is fairly loose, but keep in
+  mind, the sample size was only very small.
+- the bottom left figure is a residual plot with smoother through the data
+  cloud.  There should be no pattern.   Again, with such a small sample size,
+  little can be read into the trend presented here.
+  - the bottom right figure is a distribution of Cook's D values.  One
+  observation has been identified as influential - but that is bound to be the
+  case with a small sample size.
+
+## check_distribution
+
+The `check_distribution()` function attempts to provided some guidance as to
+which distributions are likely to be useful for modelling the response.  Note,
+this is very much only experimental and not going to be all that useful for a
+small sample size.
+
+```{r modelValidation1e, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE, warning=FALSE, message=FALSE}
+performance::check_distribution(data_gam.gam)
+```
+
+**Conclusions:**
+
+- in this case, the normal distribution is favoured based on residuals and beta
+based on the response. 
+
+## DHARMa residuals
+```{r modelValidationGAM1f, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE, warning=FALSE, message=FALSE, cache=FALSE}
+resids <- DHARMa::simulateResiduals(data_gam.gam,  plot=TRUE)
+```
+
+**Conclusions:**
+
+- DHARMa residuals do not suggest anything alarming.
+
+## Concurvity
+
+Concurvity is the non-linear equivalent of (multi)collinerity.
+Concurvity measures how well each smooth could be approximated by either a combination of the other smooth(s) or
+each individual other smooth.
+Three metrics are generated - all of which are bounded between 0 (no issue) and 1 (total lack of indentifiability)
+Essentially,  we can decompose a smooth term into the component that lies within the space (g) of other terms
+and the component that is unique to the terms own space (f).
+The three metrics are all variants on the ratio of g:f
+
+- worst - largest ratio possible from any estimated coefficients (data ignored) - worst case scenario
+- observed - ratio based on observed coefficients - can be over optimistic
+- estimate - a measure of the extent to which f basis can be explained by g basis.
+              It is a good compromise between over optimism and over pessimism,  yet is harder to understand
+
+```{r modelValidationGAM2, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE, cache=TRUE}
+concurvity(data_gam.gam)
+concurvity(data_gam.gam, full=FALSE)
+```
+
+**Conclusions:**
+
+- the above was only included so as to get used to the range of diagnostics that
+should become routine when fitting GAMs.  Of course, since in this case, there
+is only a single smooth, concurvity cannot be an issue.
+
+</div>
+
+# Partial plots
+
+<div class='HIDDEN'>
+
+There are fewer options for plotting partial plots from GAM.
+Note, the plots are passed on to cowplot for multiple figures
+and thus it is not possible to use + to add more ggplot instructions.
+
+```{r partialPlot, results='markdown', eval=TRUE, hidden=TRUE}
+draw(data_gam.gam)
+## or with the 'partial residuals' (quasi observations) included
+draw(data_gam.gam, residuals=TRUE)
+```
+
+</div>
+
+# Model investigation / hypothesis testing {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## summary
+
+```{r modelSummary1a, results='markdown', eval=TRUE, hidden=TRUE}
+summary(data_gam.gam)
+```
+
+**Conclusions:**
+
+- a single parametric parameter (the intercept) was estimated to be 
+`r round(summary(data_gam.gam)$p.table[1, 1], 2)`.  
+- there was a single smooth term estimated:
+   -  this represents the trend between x and y
+   -  the estimated degrees of freedom (EDF, and thus knots-1) of the smoother is 
+   `r round(summary(data_gam.gam)$s.table[1, 1], 2)`.  Note, as this is
+   penalized for complexity, it is typically not an integer.  If the estimated
+   line was completely linear, then we would expect the EDF to be 1.  Values
+   larger than 1 imply an increasingly wiggly trend.
+   -  the table also presents an estimate of reference degrees of freedom
+      (Ref.df).  In this case, they are estimated to be 
+      `r round(summary(data_gam.gam)$s.table[1, 2], 2)`.  According to the author
+      of this package, they are a 'throwback' to the degrees of freedom that
+      used to be used in the calculations of the test statistic and p-values.
+      These calculations are no longer used, and thus `Ref.df` are of no real
+      use anymore.
+   -  the `F` statistic and `p-value` test the null hypothesis that the trend is
+      a straight, flat line.  In this case, that is not rejected (due to a lack
+      of power).  This null hypothesis could be rejected either because the
+      trend is wiggly or that it is linear, but with a slope different to zero.
+- the output also includes two alternatives for quantifying the amount of
+      variation explained by the model:
+   - the adjusted R-sq.  This is the proportion of the variance explained.  For
+     technical reasons, this estimate can be negative is the fitted model is
+     worse than a null model.  It can also be higher for the simpler of two
+     nested models (hence adjusted).
+   - the deviance explained.  It is the proportion of the null deviance
+   explained by the model and unlike R-sq, takes into account any offsets.  The
+   deviance explained is also more appropriate for non Gaussian models.
+   Here, this property is esimated to be
+   `r round(summary(data_gam.gam)$dev.expl, 2)`.  Hence the model explaines
+   approximately `r 100*round(summary(data_gam.gam)$dev.expl, 2)`% of the total
+   deviance.
+   
+  
+## tidy
+
+```{r modelSummary1b, results='markdown', eval=TRUE, hidden=TRUE}
+tidy(data_gam.gam)
+```
+
+## AIC
+
+```{r modelSummary1c, results='markdown', eval=TRUE, hidden=TRUE}
+AIC(data_gam.gam)
+AICc(data_gam.gam)
+```
+
+</div>
+
+# Further analyses {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+For the purpose of further illustration, lets proceed as if the above analyses
+had suggested a significantly wiggly relationship.  If this was the case, in
+addition to a qualitative description of the trend (for example, that the
+response intially increases to a peak before declining again), we might want to
+be able to provide estimates about:
+
+- the value of x associated with the peak (or trough is that was appropriate).
+  Such values correspond to locations along the trend where the slope is equal
+  to zero.
+- the value(s) of x associated with the greatest rate of change in the response.
+  Such values correspond to locations along the trend where the slope is of
+  greatest magnitude.
+- the value(s) of x associated with the greatest change in trajectory.  Such
+  values might help identify underlying the onset of pertebations and correspond
+  to locations along the trend with teh greatest degree of curvature.
+  
+If we had a formula for the curve, we could simply take the first
+order derivatives to find the slope (addressing the first two of the above) and
+the second order derivatives (to address the third of the above).
+Unfortunately, we do not have such an equation.  However, it is possible to
+estimate these derivatives via finite differences.  This is a technique in which
+predictions are made for a large sequence of values of a predictor (hence very
+small interval between predictions), and the instantaneous slopes are calculated
+between successive pairs of predictions.
+
+## find the optimum
+
+```{r Derivatives1a, results='markdown', eval=TRUE, hidden=TRUE}
+derivatives(data_gam.gam,  order=1) %>% draw
+## Find the approximate peak
+d = derivatives(data_gam.gam,  order=1)
+d
+d %>% summarise(Value=data[which.min(abs(derivative))],
+                lower=data[which.min(abs(lower))],
+                upper=data[which.min(abs(upper))])
+```
+
+```{r Derivatives1a1, results='markdown', eval=TRUE, hidden=TRUE, echo=FALSE}
+dd=d %>% summarise(Value=data[which.min(abs(derivative))],
+                lower=data[which.min(abs(lower))],
+                upper=data[which.min(abs(upper))]) %>%
+  mutate(CI=paste0(round(lower, 2),'-',round(upper,2)))
+```
+
+**Conclusions:**
+
+- the optimum in the trend was found to be associated with an estimated
+predictor value of `r round(as.numeric(dd$Value), 2)`.
+- the 95% confidence interval for the value of the predictor associated with the
+  optimum is `r dd %>% pull(CI)`. 
+- if there were more than one peak or trough, we could estimate multiples simply
+  by restricting the search range for each estimate. 
+
+
+## find the largest slope
+
+If we wanted to find the value of the predictor that corresponded to the
+steepest positive slope:
+
+```{r Derivatives1b, results='markdown', eval=TRUE, hidden=TRUE}
+derivatives(data_gam.gam,  order=1) %>% draw
+## Find the approximate peak
+d = derivatives(data_gam.gam,  order=1)
+d
+d %>% summarise(
+        maxDer = max(derivative), 
+        Value=data[which.max(derivative)],
+        lower=data[which.min(abs(maxDer-lower))],
+        upper=data[which.min(abs(maxDer-upper))])
+```
+
+```{r Derivatives1b1, results='markdown', eval=TRUE, hidden=TRUE, echo=FALSE}
+dd <- d %>% summarise(
+              maxDer = max(derivative), 
+              Value=data[which.max(derivative)],
+              lower=data[which.min(abs(maxDer-lower))],
+              upper=data[which.min(abs(maxDer-upper))]) %>%
+  mutate(CI=paste0(round(lower, 2),'-',round(upper,2)))
+```
+
+**Conclusions:**
+
+- the steepest positive slope in the trend was found to be associated with an estimated
+predictor value of `r round(as.numeric(dd$Value), 2)`.
+- the 95% confidence interval for the value of the predictor associated with the
+  optimum is `r dd %>% pull(CI)`. 
+- note, a similar routine could be performed to provide the steepest negative
+  slope.  Similiarly, by restricting the search range, localised steepest slopes
+  could be estimated.
+  
+
+
+
+## find the greatest change in curvature
+
+```{r Derivatives1c, results='markdown', eval=TRUE, hidden=TRUE}
+derivatives(data_gam.gam,  order=2) %>% draw
+## Find the approximate peak
+d = derivatives(data_gam.gam,  order=2)
+d
+d %>% summarise(Value=data[which.max(abs(derivative))],
+                lower=data[which.max(abs(lower))],
+                upper=data[which.max(abs(upper))])
+```
+
+**Conclusions:**
+
+- this has seemingly not yielded overly useful results in this case
+
+</div>
+
+# Summary figures
+
+<div class='HIDDEN'>
+Although it is possible to obtain partial plots using variety of methods (see
+above), all of these produce partial plots that are centered on the y-axis.
+Whist this is technically correct, as the GAM partial plot is concerned with describing the
+shape of the trend rather than the absolute value along the trend and it is not
+burdened with having to account for the impacts of other predictors on the
+absolute values, it does make it less useful as a visual representation of the
+nature of the relationship between the response and predictor(s).
+
+So an alternate way to produce a useful summary figure is to base the figure on
+predictions (using `emmeans()` for convenience).
+</div>
+
+```{r SummaryFig, results='markdown', eval=TRUE, hidden=TRUE}
+data_gam.list <- with(data_gam, list(x = modelr::seq_range(x, n = 100)))
+
+newdata = emmeans(data_gam.gam, ~x, at = data_gam.list) %>%
+    as.data.frame
+head(newdata)
+
+ggplot(newdata, aes(y=emmean, x=x)) +
+    geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), fill='blue', alpha=0.3) +
+    geom_line() +
+    geom_point(data=data_gam, aes(y=y,x=x))+
+    theme_bw()
+newdata <- newdata %>% mutate(Peak = between(emmean, 7.91, 9.48))
+ggplot(newdata, aes(y=emmean, x=x)) +
+    geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), fill='blue', alpha=0.3) +
+    geom_line(aes(color=Peak)) +
+    geom_point(data=data_gam, aes(y=y,x=x))+
+    theme_bw()
+## Partials
+#resid.list = list(x=data_gam$x)
+newdata.partial = data_gam %>%
+  mutate(Pred = predict(data_gam.gam,  type='link'),
+         Res = resid(data_gam.gam),
+         Resid = Pred + Res)
+#newdata.partial = emmeans(data_gam.gam, ~x, at=resid.list) %>%
+#    as.data.frame %>%
+#    mutate(Resid = emmean + resid(data_gam.gam))
+
+ggplot(newdata, aes(y=emmean, x=x)) +
+    geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), fill='blue', alpha=0.3) +
+    geom_line() +
+    geom_point(data=newdata.partial, aes(y=Resid,x=x))+
+    theme_bw()
+
+
+```
+# References

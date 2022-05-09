@@ -1,0 +1,1192 @@
+---
+title: "GAM Part3"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../public/resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../public/resources/references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE, warning=TRUE, message=FALSE}
+library(mgcv)      #for GAMs
+library(gratia)    #for GAM plots
+library(emmeans)   #for marginal means etc
+library(broom)     #for tidy output
+library(MuMIn)     #for model selection and AICc
+library(lubridate) #for processing dates
+library(tidyverse) #for data wrangling
+library(DHARMa)    #for residuals diagnostics
+library(performance) #for residual disagnostics
+library(see)        # to visualize residual diagnostics
+library(patchwork)  #for grids of plots
+```
+ 
+# Scenario
+
+The Australian Institute of Marine Science (AIMS) have a long-term
+inshore marine water quality monitoring program in which water samples
+are collected and analysed from sites (reef.alias) across the GBR numerous times 
+per year.  The focus of this program is to report long-term condition and change
+in water quality parameters.
+
+Although we do have latitude and longitudes, the nature of the spatial design
+predominantly reflects a series of transects that start near the mouth of a
+major river and extend northwards, yet mainly within the open coastal zone.  As
+a result, this design is not well suited to any specific spatial analyses (since
+they are mainly one dimensional).
+
+![AIMS water quality monitoring](../public/resources/AIMS_wq.jpg){width="600" height="325"}
+
+Format of aims.wq.csv data file
+
+LATITUDE LONGITUDE reef.alias Water_Samples Region Subregion Season waterYear NOx
+-------- --------- ---------- ------------- ------ --------- ------ --------- ---
+-16.1    145.      Cape Trib… AIMS          Wet T… Barron D… Dry    2008      0.830
+-16.1    145.      Cape Trib… AIMS          Wet T… Barron D… Wet    2008      0.100
+-16.1    145.      Cape Trib… AIMS          Wet T… Barron D… Dry    2009      0.282
+-16.1    145.      Cape Trib… AIMS          Wet T… Barron D… Wet    2009      1.27
+-16.1    145.      Cape Trib… AIMS          Wet T… Barron D… Dry    2009      0.793
+-16.1    145.      Cape Trib… AIMS          Wet T… Barron D… Dry    2010      0.380
+\...     \...      \...       \...          \...   \...      \...   \...      \...
+
+--------------     ---------------------------------------------------------------------
+**LATITUDE**       - Latitudinal coordinate
+**LONGITUDE**      - Longitudinal coordinate
+**reef.alias**     - Internal AIMS reef name
+**Water_Samples**  - Categorical label of who collected the data
+**Region**         - The MMP region
+**Subregion**      - The MMP subregion
+**Season**         - A categorical listing of Wet or Dry
+**waterYear**      - The water year (1st Oct - 30 Sept) to which the data are attached
+**Date**           - The date the sample was collected
+**NOx**            - Nitrite and Nitrate
+--------------     ---------------------------------------------------------------------
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+wq = read_csv('../public/data/aims.wq.csv', trim_ws=TRUE)
+glimpse(wq)
+```
+
+<div class='HIDDEN'>
+We will start by defining each of the categorical variables as factors.  We will
+also define the random effect (reef.alias) as a factor.
+
+```{r prepareData, results='markdown', eval=TRUE}
+wq = wq %>% mutate(reef.alias=factor(reef.alias),
+                   Region=factor(Region),
+                   Subregion=factor(Subregion),
+                   Season=factor(Season))
+```
+
+</div>
+
+# Exploratory data analysis
+
+Model formula:
+$$
+y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
+\mu_i =\beta_0 + f(Date_i) + f(Month_i)
+$$
+
+where $\beta_0$ is the y-intercept. $f(Date)$ and $f(Month)$ indicate the additive smoothing functions of the long-term temporal trends and the annual seasonal trends respectively. 
+
+<div class='HIDDEN'>
+
+If we begin with a quck scatterplot of NOx agains Date..
+
+```{r EDA1a, results='markdown', eval=TRUE, hidden=TRUE}
+ggplot(wq, aes(y=NOx, x=Date)) + geom_point()
+```
+
+We know that these NOx values have been measured over time from a number of
+locations (reef.alias).  Therefore, it would be good to facet the scatterplot
+conditional on the reef.alias.
+
+
+```{r EDA1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=15, fig.height=12}
+ggplot(wq, aes(y=NOx, x=Date)) +
+    geom_point() +
+    facet_wrap(~reef.alias)
+```
+
+**Conclusions:**
+
+- evidently, some locations (reef.alias) have longer time series than others
+- the amount and variability of NOx also varies greatly between locations.
+- the temporal trends are clearly not linear and possibly more complex than
+  simple polynomials - it is likely that splines will be useful
+- assumptions of normality are difficult to assess, however it would seem
+  logical that the data will not follow a Gaussian distribution (since values
+  less than 0 are not possible and it does appear that there is a relationship
+  between mean and variance).
+
+```{r EDA1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=15, fig.height=12}
+ggplot(wq, aes(y=NOx, x=Date)) +
+  geom_point() +
+  geom_smooth() +
+  scale_y_continuous(trans=scales::pseudo_log_trans()) +
+  facet_wrap(~reef.alias,  scales='free_y')
+
+```
+
+**Conclusions:**
+
+- although the loess smoothers are not particularly appropriate for non-Gaussian
+  data, they nevertheless help us see that there are both similarities and
+  differnces in the trends between locations.   Most of the locations that have
+  a long time series show some sort of peak in NOx around about 2014
+
+</div>
+
+
+# Data preparations
+
+<div class='HIDDEN'>
+
+Date data cannot be directly modelled, it must be converted into a numeric.
+This can be performed with the `decimal_date()` function within the `lubridate` package.
+
+Although we generally want to scale any continuous predictors, it appears that
+doing so with Date objects has downstream issues - the models fit ok, but
+partial plots are displaced along the x-axis.
+So as an alternative either dont scale, or do so with a routine that does not
+automatically back-trasform (such as sjmisc::std or sjmisc::center).
+
+```{r prepareData2, results='markdown', eval=TRUE, hidden=TRUE}
+wq=wq %>% mutate(Dt.num=decimal_date(Date))
+#wq=wq %>% mutate(sDt=scale(Date))
+```
+
+</div>
+
+# Simple model (Pandora only) {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+When contemplating fitting a complex model, it is often good practice to build a
+model up, starting with something relatively simple.  That way, if the model
+fails or yeilds strange outcomes, it is easier to diagnose the issues.
+In the spirit of this, we will begin by building up a temporal model for a
+single reef (Pandora), before moving on to generalise across multiple reefs in a
+mixed effects model.
+
+
+## Exploratory data analysis
+
+```{r model1a, results='markdown', eval=TRUE, hidden=TRUE}
+wq.pandora=wq %>% filter(reef.alias=='Pandora', !is.na(NOx))
+
+ggplot(wq.pandora, aes(y=NOx, x=Date)) + geom_point() +
+    geom_smooth() +
+  scale_y_log10()
+```
+
+**Conclusions:**
+
+- of concern in the above figure is the set of NOx values of 0.01 at the start
+  of the time series.  These values represent the limit of detection of the
+  instrumentation used for measuring NOx at the time.  Any value measured at
+  0.01 or less was just recorded as 0.01.
+- ideally, such cases should be modelled as censored so as to acknowledge that
+  they are at or below 0.01 and not exactly 0.01 (with no variation).
+  Unfortunately, this is not available with the `mgcv` package (or any
+  frequentist package for fitting GAM's that I am aware of).
+- options for dealing with such circumstances very much depend on the
+  reliability of these values.  If we believe that they are approximately
+  representative, we might elect to keep them in an model as normal.  On the
+  other hand, if the reliability of the measurements is questionable, we might
+  elect to exclude these values.
+- in the absence of any additional information about these observations, we will
+  keep them in.  
+
+```{r model1b, results='markdown', eval=TRUE, hidden=TRUE}
+wq.pandora=wq %>% filter(reef.alias=='Pandora', !is.na(NOx))
+```
+
+## Fit the model
+
+Actually,it might be worth exploring a variety of models:
+
+- a regular Gaussian model - this is unlikely to be a good fit
+- a log-normal like model
+- a gamma with a log link
+- a tweedie with a log link
+
+```{r fitModel1a, results='markdown', eval=TRUE, hidden=TRUE}
+wq.gam1 <- gam(NOx ~ s(Dt.num), data=wq.pandora, family='gaussian', method='REML')
+wq.gam2 <- gam(NOx ~ s(Dt.num), data=wq.pandora, family=gaussian(link='log'), method='REML')
+wq.gam3 <- gam(NOx ~ s(Dt.num), data=wq.pandora, family=Gamma(link='log'), method='REML')
+wq.gam4 <- gam(NOx ~ s(Dt.num), data=wq.pandora, family=tw(link='log'), method='REML')
+library(MuMIn)
+AICc(wq.gam1, wq.gam2, wq.gam3, wq.gam4)
+```
+
+**Conclusions:**
+
+- the gamma model has been identified as the best
+- we will nonetheless explore model validation and summaries of the other models
+  for the sake of comparison.
+
+## Model validation {.tabset .tabset-pills}
+
+### Gaussian
+
+```{r modelValidation1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+k.check(wq.gam1)
+appraise(wq.gam1)
+#performance::check_model(wq.gam1)
+```
+
+**Conclusions:**
+
+- there is clear evidence that the model is not a good fit
+   - the Q-Q plot is far from linear
+   - the residuals are not normal
+   - the relationship between the fitted and observed is not linear 
+
+```{r modelValidation1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+wq.resid <- simulateResiduals(wq.gam1,  plot=TRUE)
+testTemporalAutocorrelation(wq.resid,  time=wq.gam1$model$Dt.num)
+```
+
+**Conclusions:**
+
+- there DHARMA residuals are less concerning
+- there is no evidence of temporal autocorrelation
+
+### log-normal (like)
+
+```{r modelValidation2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+k.check(wq.gam2)
+appraise(wq.gam2)
+#performance::check_model(wq.gam2)
+```
+
+**Conclusions:**
+
+- there is clear evidence that the model is not a good fit
+   - the Q-Q plot is far from linear
+   - the residuals are not normal
+   - the relationship between the fitted and observed is not linear 
+
+```{r modelValidation2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+wq.resid <- simulateResiduals(wq.gam2,  plot=TRUE)
+testTemporalAutocorrelation(wq.resid,  time=wq.gam2$model$Dt.num)
+```
+
+**Conclusions:**
+
+- there DHARMA residuals are less concerning (although these are not great)
+- there is no evidence of temporal autocorrelation
+
+
+### gamma
+
+```{r modelValidation3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+k.check(wq.gam3)
+appraise(wq.gam3)
+#performance::check_model(wq.gam3)
+```
+
+**Conclusions:**
+
+- there is no evidence the model is not a good fit
+
+```{r modelValidation3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+wq.resid <- simulateResiduals(wq.gam3,  plot=TRUE)
+testTemporalAutocorrelation(wq.resid,  time=wq.gam3$model$Dt.num)
+```
+
+**Conclusions:**
+
+- there is no evidence the model is not a good fit
+- there is no evidence of temporal autocorrelation
+
+### tweedie
+
+```{r modelValidation4a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+k.check(wq.gam4)
+appraise(wq.gam4)
+#performance::check_model(wq.gam4)
+```
+
+**Conclusions:**
+
+- there is no evidence the model is not a good fit
+
+```{r modelValidation4b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+#wq.resid <- simulateResiduals(wq.gam4,  plot=TRUE)
+#testTemporalAutocorrelation(wq.resid,  time=wq.gam4$model$Dt.num)
+```
+
+**Conclusions:**
+
+- unfortunately, DHARMa does not yet directly support tweedie models.
+
+## Partial plots {.tabset .tabset-pills}
+
+### Gaussian
+
+```{r partialPlots1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+draw(wq.gam1)
+```
+
+```{r partialPlots1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+plot(wq.gam1, pages=1,  shift=coef(wq.gam1)[1], resid=TRUE, cex=4,  scale=0)
+```
+
+### log-normal (like)
+
+```{r partialPlots2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+draw(wq.gam2)
+```
+
+```{r partialPlots2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+plot(wq.gam2, pages=1,  shift=coef(wq.gam2)[1], resid=TRUE, trans=exp,  cex=4,  scale=0)
+```
+
+### gamma
+
+```{r partialPlots3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+draw(wq.gam3)
+```
+
+```{r partialPlots3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+plot(wq.gam3, pages=1,  shift=coef(wq.gam3)[1], resid=TRUE, trans=exp,  cex=4,  scale=0)
+```
+
+### tweedie
+
+```{r partialPlots4a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+draw(wq.gam4)
+```
+
+```{r partialPlots4b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+plot(wq.gam4, pages=1,  shift=coef(wq.gam4)[1], resid=TRUE, trans=exp,  cex=4,  scale=0)
+```
+
+## Summaries {.tabset .tabset-pills}
+
+### Gaussian
+
+```{r summary1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+summary(wq.gam1)
+```
+
+**Conclusions:**
+
+- all parameter estimates are on the link scale
+- the intercept (expected NOx concentration) in the average year is estimated to
+  be `r round(summary(wq.gam1)$p.table[1, 1], 2)`
+- there is no inferential evidence of a trend in NOx over time.
+- the model explains only around `r 100*round(summary(wq.gam1)$dev.expl, 2)`% of
+  the null deviance 
+
+
+```{r summary1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+tidy(wq.gam1)
+```
+
+### log-normal (like)
+
+```{r summary2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+summary(wq.gam2)
+```
+
+**Conclusions:**
+
+- all parameter estimates are on the link scale
+- the intercept (expected NOx concentration) in the average year is estimated to
+  be `r round(summary(wq.gam2)$p.table[1, 1], 2)` (link scale) or 
+  `r round(exp(summary(wq.gam2)$p.table[1, 1]), 2)` (response scale) 
+- there is no inferential evidence of a trend in NOx over time.
+- the model explains only around `r 100*round(summary(wq.gam2)$dev.expl, 2)`% of
+  the null deviance 
+
+```{r summary2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+tidy(wq.gam2)
+```
+
+### gamma
+
+```{r summary3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+summary(wq.gam3)
+```
+
+**Conclusions:**
+
+- all parameter estimates are on the link scale
+- the intercept (expected NOx concentration) in the average year is estimated to
+  be `r round(summary(wq.gam3)$p.table[1, 1], 2)` (link scale) or 
+  `r round(exp(summary(wq.gam3)$p.table[1, 1]), 2)` (response scale) 
+- there is evidence of a non-linear trend in NOx over time. 
+- the model explains only around `r 100*round(summary(wq.gam3)$dev.expl, 2)`% of
+  the null deviance 
+
+```{r summary3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+tidy(wq.gam3)
+```
+
+### tweedie
+
+```{r summary4a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+summary(wq.gam4)
+```
+
+**Conclusions:**
+
+- all parameter estimates are on the link scale
+- the intercept (expected NOx concentration) in the average year is estimated to
+  be `r round(summary(wq.gam4)$p.table[1, 1], 2)` (link scale) or 
+  `r round(exp(summary(wq.gam4)$p.table[1, 1]), 2)` (response scale) 
+- there is evidence of a non-linear trend in NOx over time. 
+- the model explains only around `r 100*round(summary(wq.gam4)$dev.expl, 2)`% of
+  the null deviance 
+
+```{r summary4b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+tidy(wq.gam4)
+```
+
+</div>
+
+# Exploring more models {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+It is likely that NOx levels vary throughout a year.  This might be related to
+river runoff etc. By not accounting for this, the unexplained variation is
+relatively high and the power associated with the long-term trends will be
+relatively low.
+
+We have two options for accounting for these intra-annual fluctuations:
+
+- including a categorical variable for coding season.  This would allow us to
+  fit a temporal smoother that is conditional on season (wet or dry) and might
+  be appropriate if we believe that there is a substantial difference in NOx
+  between the wet and dry tropical seasons.
+- including a cyclical smoother for month.  This would allow us to detrend the
+  tremporal trend into inter and intra annual trends.
+  
+## By Season {.tabset .tabset-pills}
+
+### Fit model
+
+```{r fitModel5a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+wq.gam5 <- gam(NOx ~ s(Dt.num, by=Season),
+               data=wq.pandora,
+               family=Gamma(link='log'), method='REML')
+```
+
+### Model validation
+
+```{r modelValidation5a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+k.check(wq.gam5)
+appraise(wq.gam5)
+#performance::check_model(wq.gam5)
+```
+
+**Conclusions:**
+
+- the k checks do not indicate that the number of knots have been over
+  constrained
+- the Q-Q plot looks good
+- the residuals plot looks fine
+- the relationship between fitted and observed values is not particularly
+  tight - there is clearly still a large amount of uncertainty
+- none of the observations have been identified as overly influential
+
+```{r modelValidation5b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+wq.resid <- simulateResiduals(wq.gam5,  plot=TRUE)
+testTemporalAutocorrelation(wq.resid,  time=wq.gam5$model$Dt.num)
+```
+
+**Conclusions:**
+
+- all the simulated residual diagnostics look good, there is no evidence of
+  overdispersion or lack of fit etc
+- there is no evidence of temporal autocorrelation
+  
+### Partial Plots
+
+```{r partialPlots5a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+draw(wq.gam5)
+```
+
+```{r partialPlots5b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+plot(wq.gam5, pages=1,  shift=coef(wq.gam5)[1], resid=TRUE, trans=exp,  cex=4,  scale=0)
+```
+
+
+## Inter/Intra annual trends {.tabset .tabset-pills}
+
+### Fit model
+
+Cyclical smoothers force the start and end of the trend to line up.  As such,
+they assume that the bounds of the data represent the extremes of the cycle.
+The AIMS water quality marine monitoring program does not visit every site in
+every month.  Importantly, sites are rarely visited in either December or
+January.  Of course, December and January are the bookends of a year. 
+
+To ensure that the cyclical smoother extends from December to January, we need
+to define the extent of the month codes.  When doing so, we need to assign a
+number of knots and this must match the knots argument in the smoother (in this
+case k=5).  A k of 5 was chosen arbitrarily to allow some wiggliness without
+going crazy. 
+
+```{r fitModel6a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+wq.gam6 <- gam(NOx ~ s(Dt.num)+
+                 s(Mnth,bs='cc',k=5,fx=F),
+               knots=list(Mnth=seq(1,12,length=5)),
+               data=wq.pandora,
+               family=Gamma(link='log'), method='REML')
+```
+
+### Model validation
+
+```{r modelValidation6a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+k.check(wq.gam6)
+appraise(wq.gam6)
+#performance::check_model(wq.gam6)
+```
+
+**Conclusions:**
+
+- the k checks do not indicate that the number of knots have been over
+  constrained
+- the Q-Q plot looks good
+- the residuals plot looks fine
+- the relationship between fitted and observed values is not particularly
+  tight - there is clearly still a large amount of uncertainty
+
+```{r modelValidation6b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+wq.resid <- simulateResiduals(wq.gam6,  plot=TRUE)
+testTemporalAutocorrelation(wq.resid,  time=wq.gam5$model$Dt.num)
+```
+
+**Conclusions:**
+
+- most the simulated residual diagnostics look good, there is no evidence of
+  overdispersion or lack of fit etc
+- the lower quantile of residuals suggested that there was possibly some pattern
+  remaining - although this is not based on much data.
+- there is no evidence of temporal autocorrelation
+  
+### Partial Plots
+
+```{r partialPlots6a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+draw(wq.gam6)
+```
+
+```{r partialPlots6b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+plot(wq.gam6, pages=1,  shift=coef(wq.gam5)[1], resid=TRUE, trans=exp,  cex=4,  scale=0)
+```
+
+## AIC
+
+```{r AIC1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+AIC(wq.gam5, wq.gam6)
+```
+
+**Conclusions:**
+
+- despite being a more complex model, the model that includes the cyclical
+  smoother is a better fit.
+  
+## Model investigation / hypothesis testing
+
+```{r modelSummary, results='markdown', eval=TRUE, hidden=TRUE}
+summary(wq.gam6)
+```
+
+**Conclusions:**
+
+- all parameter estimates are on the link scale
+- the intercept (expected NOx concentration) in the average year is estimated to
+  be `r round(summary(wq.gam6)$p.table[1, 1], 2)` (link scale) or 
+  `r round(exp(summary(wq.gam6)$p.table[1, 1]), 2)` (response scale) 
+- there is evidence of a long-term non-linear trend in NOx.
+- there is also evidence of a non-linear trend in NOx within a year
+- the model explains only around `r 100*round(summary(wq.gam6)$dev.expl, 2)`% of
+  the null deviance 
+
+## Summary figure
+
+```{r summaryFigure6a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+wq.list = with(wq.pandora, list(Dt.num = seq(min(Dt.num), max(Dt.num), len=100)))
+newdata = emmeans(wq.gam6, ~Dt.num, at=wq.list, type='response') %>% as.data.frame
+head(newdata)
+g1=ggplot(newdata, aes(y=response, x=date_decimal(Dt.num))) +
+    geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), fill='blue', alpha=0.3) +
+    geom_line() +
+    scale_x_datetime('') +
+    theme_bw()
+
+wq.list = with(wq.pandora, list(Mnth = seq(1, 12, len=100)))
+newdata1 = emmeans(wq.gam6, ~Mnth, at=wq.list, type='response') %>% as.data.frame
+head(newdata1)
+g2=ggplot(newdata1, aes(y=response, x=Mnth)) +
+    geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), fill='blue', alpha=0.3) +
+    geom_line() +
+    theme_bw()
+#library(gridExtra)
+#grid.arrange(g1, g2, nrow=1)
+g1 + g2
+
+## Partial residuals
+wq.presid = data.frame(Dt.num=wq.gam6$model$Dt.num, Mnth=mean(wq.gam6$model$Mnth)) %>%
+    mutate(Pred = predict(wq.gam6, newdata=., type='link'),
+           Resid = wq.gam6$residuals,
+           Presid = exp(Pred + Resid))
+head(wq.presid)
+ggplot(newdata, aes(y=response, x=date_decimal(Dt.num))) +
+    geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), fill='blue', alpha=0.3) +
+    geom_line() +
+    scale_x_datetime('') +
+    theme_bw() +
+    geom_point(data=wq.presid, aes(y=Presid)) +
+    geom_point(data=wq.pandora, aes(y=NOx), color='red', alpha=0.5)
+
+wq.presid=with(wq.gam6$model, data.frame(Dt.num=Dt.num, Mnth=mean(Mnth))) %>%
+    mutate(Resid=exp(as.vector(predict(wq.gam6, newdata=., type='link')) + wq.gam6$residuals))
+
+ggplot(newdata, aes(y=response, x=date_decimal(Dt.num))) +
+    geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), fill='blue', alpha=0.3) +
+    geom_line() +
+    geom_point(data=wq.presid, aes(y=Resid)) +
+    scale_x_datetime('') +
+    theme_bw() 
+
+```
+
+</div>
+
+# Mixed model (all reefs) {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+```{r process3, results='markdown', eval=FALSE,hidden=TRUE}
+wq.sub <- wq %>%
+  group_by(reef.alias) %>%
+  mutate(Min=min(Dt.num)) %>%
+  ungroup() %>%
+  filter(Min<2012) %>%
+  droplevels
+
+## reef=wq %>%
+##   group_by(reef.alias) %>%
+##   dplyr:::summarise(Min=min(Dt.num)) %>%
+##   filter(Min<2012) %>%
+##   pull(reef.alias)
+## reef
+## wq2=wq %>% filter(reef.alias %in% reef) %>% droplevels
+ggplot(wq.sub, aes(y=NOx,x=Dt.num)) +
+    geom_point() +
+    facet_wrap(~reef.alias)
+
+```
+
+There are numerous ways of fitting mixed effects GAMs"
+
+- running the `gamm()` function and including a random formula.  This will run
+  the `glmmPQL` function behind the scenes.  As such, it is not genuine
+  likelihood and is therefore limited
+- running the `gamm4` function from the package with the same name.  This will
+  run the `glmer()` behind the scenes.
+- running the `gam()` function and including a random effects smoother
+
+## EDA
+
+```{r EDA2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=15, fig.height=12}
+ggplot(wq, aes(y=NOx,x=Dt.num)) +
+    geom_point() +
+    facet_wrap(~reef.alias, scales='free_y')
+## Some reefs dont have the full time series
+```
+
+## Model 1 (gamm) {.tabset .tabset-pills}
+
+### Fit the model
+
+```{r fitModel7a, results='markdown', eval=TRUE,hidden=TRUE}
+wq.gamm1 <- gamm(NOx ~ s(Dt.num), random=list(reef.alias=~1),
+                 data=wq, family=Gamma(link='log'), method='REML')
+```
+
+### Validate the model
+
+```{r validateModel7a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=5, fig.height=5}
+k.check(wq.gamm1$gam)
+appraise(wq.gamm1$gam)
+```
+
+**Conclusions:**
+
+- although the k-index and p-value is low, the edf is sufficiently lower than k'
+  to not be too concerned about any overconstraining of the number of knots
+- the residual diagnostics are not fantastic
+   - the Q-Q normal deviates substantially from linear
+   - the residuals do not follow a normal distribution
+   - the relationship between observed and fitted values is not very good 
+
+```{r validateModel7b, results='markdown', eval=TRUE,hidden=TRUE, fig.width=5, fig.height=5}
+#wq.resids <- simulateResiduals(wq.gamm1$gam,  plot=TRUE)
+```
+
+**Conclusions:**
+
+- unfortunately, DHARMa residuals are not available for this model
+
+### Partial plots
+
+```{r partialPlots7a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=5, fig.height=5}
+draw(wq.gamm1$gam)
+```
+
+```{r partialPlots7b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+plot(wq.gamm1$gam, pages=1,  shift=fixef(wq.gamm1$lme)[1], resid=FALSE, trans=exp,  cex=4,  scale=0)
+```
+
+
+## Model 2 (gamm4) {.tabset .tabset-pills}
+
+### Fit the model
+
+```{r fitModel8a, results='markdown', eval=TRUE,hidden=TRUE}
+wq.gamm2 <- gamm4::gamm4(NOx ~ s(Dt.num),  random=~(1|reef.alias),
+                 data=wq, family=Gamma(link='log'), REML=TRUE)
+```
+
+### Validate the model
+
+```{r validateModel8a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=5, fig.height=5}
+k.check(wq.gamm2$gam)
+appraise(wq.gamm2$gam)
+```
+
+**Conclusions:**
+
+- although the k-index and p-value is low, the edf is sufficiently lower than k'
+  to not be too concerned about any overconstraining of the number of knots
+- the residual diagnostics are not fantastic
+   - the Q-Q normal deviates substantially from linear
+   - the residuals do not follow a normal distribution
+   - the relationship between observed and fitted values is not very good 
+
+```{r validateModel8b, results='markdown', eval=TRUE,hidden=TRUE, fig.width=5, fig.height=5}
+#wq.resids <- simulateResiduals(wq.gamm2$gam,  plot=TRUE)
+```
+
+**Conclusions:**
+
+- unfortunately, DHARMa residuals are not available for this model
+
+### Partial plots
+
+```{r partialPlots8a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=5, fig.height=5}
+draw(wq.gamm2$gam)
+```
+
+```{r partialPlots8b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+plot(wq.gamm2$gam, pages=1,  shift=fixef(wq.gamm2$mer)[1], resid=FALSE, trans=exp,  cex=4,  scale=0)
+```
+
+
+## Model 3 (gam) {.tabset .tabset-pills}
+
+### Fit the model
+
+```{r fitModel9a, results='markdown', eval=TRUE,hidden=TRUE}
+wq.gamm3 <- gam(NOx ~ s(Dt.num) + s(reef.alias,  bs='re'),
+                 data=wq, family=Gamma(link='log'), method='REML')
+```
+
+### Validate the model
+
+```{r validateModel9a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=5, fig.height=5}
+k.check(wq.gamm3)
+appraise(wq.gamm3)
+```
+
+**Conclusions:**
+
+- the k-index and p-value is low, and the edf is approaching k' so it is
+  possible that the number of knots is overconstraining
+- the residual diagnostics are not too bad
+   - the Q-Q normal does deviate from linear
+   - the residuals nearly follow a normal distribution
+   - the relationship between observed and fitted values is not very good 
+
+```{r validateModel9b, results='markdown', eval=TRUE,hidden=TRUE, fig.width=8, fig.height=4}
+wq.resids <- simulateResiduals(wq.gamm3,  plot=TRUE)
+```
+
+**Conclusions:**
+
+- there is evidence that the residuals deviate from normality
+- two of the three quantiles still display some evidence of patterns in the residuals
+
+### Partial plots
+
+```{r partialPlots9a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=8, fig.height=4}
+draw(wq.gamm3)
+```
+
+```{r partialPlots9b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+plot(wq.gamm3, pages=1,  shift=coef(wq.gamm3)[1], resid=FALSE, trans=exp,  cex=4,  scale=0)
+```
+
+
+## Model 3a (gam) {.tabset .tabset-pills}
+
+### Fit the model
+
+```{r fitModel10a, results='markdown', eval=TRUE,hidden=TRUE}
+wq.gamm3a <- gam(NOx ~ s(Dt.num, k=20) + s(reef.alias,  bs='re'),
+                 data=wq, family=Gamma(link='log'), method='REML')
+```
+
+### Validate the model
+
+```{r validateModel10a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=5, fig.height=5}
+k.check(wq.gamm3a)
+appraise(wq.gamm3a)
+```
+
+**Conclusions:**
+
+- although the k-index and p-value is low, the edf is sufficiently lower than k'
+  to not be too concerned about any overconstraining of the number of knots
+- the residual diagnostics are not too bad
+   - the Q-Q normal does deviate from linear
+   - the residuals nearly follow a normal distribution
+   - the relationship between observed and fitted values is not very good 
+
+```{r validateModel10b, results='markdown', eval=TRUE,hidden=TRUE, fig.width=8, fig.height=4}
+wq.resids <- simulateResiduals(wq.gamm3a,  plot=TRUE)
+```
+
+**Conclusions:**
+
+- there is evidence that the residuals deviate from normality
+- two of the three quantiles still display some evidence of patterns in the residuals
+
+### Partial plots
+
+```{r partialPlots10a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=8, fig.height=4}
+draw(wq.gamm3a)
+```
+
+```{r partialPlots10b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+plot(wq.gamm3a, pages=1,  shift=coef(wq.gamm3)[1], resid=FALSE, trans=exp,  cex=4,  scale=0)
+```
+
+
+## Model 3b (gam) {.tabset .tabset-pills}
+
+### Fit the model
+
+```{r fitModel11a, results='markdown', eval=TRUE,hidden=TRUE}
+wq.gamm3b <- gam(NOx ~ s(Dt.num,  k=20)+
+                   s(Mnth,bs='cc',k=5) +
+                   s(reef.alias, bs='re'),
+                 knots=list(Mnth=seq(1,12,length=5)),
+                 family=Gamma(link='log'),
+                 data=wq, method='REML')
+```
+
+### Validate the model
+
+```{r validateModel11a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=5, fig.height=5}
+k.check(wq.gamm3b)
+appraise(wq.gamm3b)
+```
+
+**Conclusions:**
+
+- the k-index and p-value (for both the long-term and seasonal trend) are low,
+  and the edf's are approaching the respective k' so it is likely that the
+  number of knots is not overconstraining
+- the residual diagnostics are not too bad
+   - the Q-Q normal does deviate from linear
+   - the residuals nearly follow a normal distribution
+   - the relationship between observed and fitted values is not very good 
+
+```{r validateModel11b, results='markdown', eval=TRUE,hidden=TRUE, fig.width=8, fig.height=4}
+wq.resids <- simulateResiduals(wq.gamm3b,  plot=TRUE)
+```
+
+**Conclusions:**
+
+- there is evidence that the residuals deviate from normality
+- two of the three quantiles still display some evidence of patterns in the residuals
+
+### Partial plots
+
+```{r partialPlots11a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=8, fig.height=4}
+draw(wq.gamm3b)
+```
+
+```{r partialPlots11b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+plot(wq.gamm3b, pages=1,  shift=coef(wq.gamm3)[1], resid=FALSE, trans=exp,  cex=4,  scale=0)
+```
+
+## Model 3c (gam) {.tabset .tabset-pills}
+
+### Fit the model
+
+```{r fitModel12a, results='markdown', eval=TRUE,hidden=TRUE}
+## wq.gamm3c <- gam(NOx ~ s(Dt.num, k=20)+
+##                    s(Mnth,bs='cc',k=5) +
+##                    s(Region,  bs='re') +
+##                    s(reef.alias, bs='re'),
+##                  knots=list(Mnth=seq(1,12,length=5)),
+##                  family=Gamma(link='log'),
+##                 data=wq, method='REML')
+wq.gamm3c <- gam(NOx ~ s(Dt.num, by=Region, k=20)+
+                   s(Mnth,bs='cc', by=Region, k=5) +
+                   s(reef.alias, bs='re'),
+                 knots=list(Mnth=seq(1,12,length=5)),
+                 family=Gamma(link='log'),
+                data=wq, method='REML')
+```
+
+### Validate the model
+
+```{r validateModel12a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=5, fig.height=5}
+k.check(wq.gamm3c)
+appraise(wq.gamm3c)
+```
+
+**Conclusions:**
+
+- the k-index and p-value (for both the long-term and seasonal trend) are low,
+  and the edf's are approaching the respective k' so it is likely that the
+  number of knots is not overconstraining
+- the residual diagnostics are not too bad
+   - the Q-Q normal does deviate from linear
+   - the residuals nearly follow a normal distribution
+   - the relationship between observed and fitted values is not very good 
+
+```{r validateModel12b, results='markdown', eval=TRUE,hidden=TRUE, fig.width=8, fig.height=4}
+wq.resids <- simulateResiduals(wq.gamm3c,  plot=TRUE)
+```
+
+**Conclusions:**
+
+- there is evidence that the residuals deviate from normality
+- two of the three quantiles still display some evidence of patterns in the residuals
+
+### Partial plots
+
+```{r partialPlots12a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=8, fig.height=4}
+draw(wq.gamm3c)
+```
+
+```{r partialPlots12b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+plot(wq.gamm3c, pages=1,  shift=coef(wq.gamm3)[1], resid=FALSE, trans=exp,  cex=4,  scale=0)
+```
+
+</div>
+
+# Model investigation / hypothesis testing {.tabset .tabset-faded}
+
+<div class = 'HIDDEN'>
+Although the model that included smoothers conditional on Regions still had some
+outstanding issues with the DHARMa residuals (deviating from linear Q-Q and some
+non-linear pattern in the residuals), the model out-performs the other models
+and the violations are not too severe.  It is highly likely that the model fits
+well and will yeild robust estimates.
+
+## summary
+
+```{r summarizeModel12a, results='markdown', eval=TRUE, hidden=TRUE}
+summary(wq.gamm3c)
+```
+
+**Conclusions:**
+
+- all parameter estimates are on the link scale
+- the intercept (expected NOx concentration) in the average year is estimated to
+  be `r round(summary(wq.gamm3c)$p.table[1, 1], 2)` (link scale) or 
+  `r round(exp(summary(wq.gamm3c)$p.table[1, 1]), 2)` (response scale) 
+- there is evidence of a long-term non-linear trend in NOx in each of the three
+  Regions (although they are most wiggly in the Wet Tropics and Burdekin).
+- there is also evidence of a non-linear trend in NOx within a year for the
+  Mackay-Whitsunday Region (yet not so for the Wet Tropics and Burdekin).
+- the model explains only around `r 100*round(summary(wq.gamm3c)$dev.expl, 2)`% of
+  the null deviance 
+
+## tidy
+
+```{r summarizeModel12b, results='markdown', eval=TRUE, hidden=TRUE}
+tidy(wq.gamm3c)
+tidy(wq.gamm3c) %>% knitr::kable()
+```
+
+
+</div>
+
+# Further analyses
+
+<div class='HIDDEN'>
+
+The partial plots within each Region suggested that NOx concentrations peaked
+around 2014 before declining.  We might be interested in describing the extent
+of this decline (between 2014 and 2016).
+
+Marginalising over Regions, this is:
+
+```{r furtherAnalyses1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+emmeans(wq.gamm3c,  pairwise~Dt.num,  at=list(Dt.num=c(2016, 2014)),
+        type='response') %>%
+  confint
+```
+
+```{r furtherAnalyses1a1, results='markdown', eval=TRUE, echo=FALSE, hidden=TRUE, fig.width=5, fig.height=5}
+wq.emmeans <- emmeans(wq.gamm3c,  pairwise~Dt.num,  at=list(Dt.num=c(2016, 2014)), type='response') %>% confint() %>% as.data.frame
+```
+
+**Conclusions:**
+
+- the NOx concentration in 2014 was `r round(wq.emmeans[2, 2], 2)`
+- the NOx concentration in 2016 was `r round(wq.emmeans[1, 2], 2)`
+- between 2014 and 2016, NOx concentrations in open coastal waters of the GBR
+  declined by `r round(100*((1/wq.emmeans[1, 8])-1), 2)` percent
+
+Alternatively, we could exlore the same declines for each Region.
+
+```{r furtherAnalyses1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+emmeans(wq.gamm3c,  pairwise~Dt.num|Region,  at=list(Dt.num=c(2016, 2014)),
+        type='response') %>%
+  confint
+```
+
+```{r furtherAnalyses1b1, results='markdown', eval=TRUE, echo=FALSE, hidden=TRUE, fig.width=5, fig.height=5}
+wq.emmeans <- emmeans(wq.gamm3c,  pairwise~Dt.num|Region,  at=list(Dt.num=c(2016, 2014)), type='response') %>% confint() %>% as.data.frame
+```
+
+
+**Conclusions:**
+
+- the NOx concentration in 2014 was `r round(wq.emmeans[6, 3], 2)` (Wet Tropics),
+  `r round(wq.emmeans[2, 3], 2)` (Burdekin) and 
+  `r round(wq.emmeans[4, 3], 2)` (Mackay-Whitsunday) 
+- the NOx concentration in 2016 was `r round(wq.emmeans[5, 3], 2)` (Wet Tropics),
+  `r round(wq.emmeans[1, 3], 2)` (Burdekin) and 
+  `r round(wq.emmeans[3, 3], 2)` (Mackay-Whitsunday) 
+- between 2014 and 2016, NOx concentrations in open coastal waters of the GBR
+  declined by `r round(100*((1/wq.emmeans[3, 10])-1), 2)` (Wet Tropics),
+  `r round(100*((1/wq.emmeans[1, 10])-1), 2)` (Burdekin) and 
+  `r round(100*((1/wq.emmeans[2, 10])-1), 2)` (Mackay-Whitsunday) percent 
+
+</div>
+
+# Summary figures
+
+<div class='HIDDEN'>
+
+Perhaps we will start by marginalising over Regions
+
+```{r summaryFigure2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
+wq.list <- with(wq, list(Dt.num = modelr::seq_range(Dt.num, n=100),
+                        Region=levels(Region)))
+newdata <- wq.gamm3c %>%
+    emmeans(~Dt.num, at=wq.list,
+            type='response',
+            #data=wq.gamm3c$model
+            ) %>%
+    as.data.frame
+head(newdata)
+ggplot(newdata, aes(y=response, x=date_decimal(Dt.num))) +
+    geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), fill='blue', alpha=0.3) +
+    geom_line() +
+    scale_x_datetime('') +
+    theme_bw()
+
+## Partial residuals
+wq.presid <- with(wq.gamm3c$model,
+                  data.frame(Dt.num, Mnth))  %>%
+    mutate(Pred = predict(wq.gamm3c, exclude='s(reef.alias)', type='link'),
+           Resid = wq.gamm3c$resid,
+           Partial.obs = exp(Pred + Resid))
+  Resid=exp(
+    as.vector(predict(wq.gamm3c,  exclude='s(reef.alias)',  type='link')) +
+    wq.gamm3c$residuals
+  )
+
+
+head(wq.presid)
+ggplot(newdata, aes(y=response, x=date_decimal(Dt.num))) +
+  geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), fill='blue', alpha=0.3) +
+  geom_line() +
+  geom_point(data=wq.presid, aes(y=Partial.obs)) +
+  geom_point(data=wq,  aes(y=NOx, x=date_decimal(Dt.num)),  color='red') +
+  scale_x_datetime('') +
+  scale_y_continuous(breaks=seq(0,10,by=2), limits=c(0,10))+
+  theme_bw() 
+```
+
+Now conditional on Regions.
+
+```{r summaryFigure2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=9, fig.height=3}
+wq.list = with(wq, list(Dt.num = seq(min(Dt.num), max(Dt.num), len=100),
+                        Region=levels(Region)))
+newdata = emmeans(wq.gamm3c, ~Dt.num|Region, at=wq.list, type='response',
+                  data=wq.gamm3c$model) %>% as.data.frame
+head(newdata)
+ggplot(newdata, aes(y=response, x=date_decimal(Dt.num))) +
+  geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), fill='blue', alpha=0.3) +
+  geom_line() +
+  scale_x_datetime('') +
+  facet_wrap(~Region,  nrow=1) +
+  theme_bw()
+```
+
+
+</div>
+
+
+# References
+
