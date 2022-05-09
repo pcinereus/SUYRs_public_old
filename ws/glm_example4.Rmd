@@ -1,0 +1,250 @@
+---
+title: "GLM Part4"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../resources/references.bib
+---
+
+```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(car)       #for regression diagnostics
+library(broom)     #for tidy output
+library(ggfortify) #for model diagnostics
+library(sjPlot)    #for outputs
+library(knitr)     #for kable
+library(effects)   #for partial effects plots
+library(emmeans)   #for estimating marginal means
+library(ggeffects) #for partial effects plots
+library(MASS)      #for glm.nb
+library(MuMIn)     #for AICc
+library(DHARMa)    #for residual diagnostics plots
+library(modelr)    #for auxillary modelling functions
+library(performance) #for residuals diagnostics
+library(see)         #for plotting residuals
+library(patchwork)   #for grids of plots
+library(tidyverse) #for data wrangling
+```
+
+# Scenario
+
+@Loyn-1987-1987 modelled the abundance of forest birds with six predictor
+variables (patch area, distance to nearest patch, distance to nearest larger
+patch, grazing intensity, altitude and years since the patch had been isolated).
+
+![Regent honeyeater](../resources/regent_honeyeater_small.jpg){width="165" height="240"}
+
+Format of loyn.csv data file
+
+ABUND   DIST   LDIST   AREA   GRAZE   ALT   YR.ISOL
+------- ------ ------- ------ ------- ----- ---------
+..      ..     ..      ..     ..      ..    ..
+
+------------- ------------------------------------------------------------------------------
+**ABUND**     Abundance of forest birds in patch- response variable
+**DIST**      Distance to nearest patch - predictor variable
+**LDIST**     Distance to nearest larger patch - predictor variable
+**AREA**      Size of the patch - predictor variable
+**GRAZE**     Grazing intensity (1 to 5, representing light to heavy) - predictor variable
+**ALT**       Altitude - predictor variable
+**YR.ISOL**   Number of years since the patch was isolated - predictor variable
+------------- ------------------------------------------------------------------------------
+
+The aim of the analysis is to investigate the effects of a range of predictors
+on the abundance of forest birds.
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+loyn <- read_csv('../data/loyn.csv', trim_ws=TRUE)
+glimpse(loyn)
+```
+
+# Exploratory data analysis {.tabset .tabset-faded}
+
+
+This is an application of multiple regression.  The response variable in this
+instance is a little awkward in that it appears to be an average of multiple
+point quadrats rather than a pure count.  Central limits theorem suggests that
+averages should follow a normal distribution and thus we might expect that it is
+reasonable to model this bird abundance against a Gaussian distribution.
+However, this has the potential to become problematic since a Gaussian
+distribution can extend below zero whereas this is clearly not logical for bird
+abundance.  As a result, we might find the at the model can predict bird
+abundances less than zero.   
+
+If this were our own analysis, we might first attempt to model these data
+against a Gaussian distribution and then explore whether this could lead to
+negative predictions - it may be that the bird abundances are sufficiently high
+that the issue of negative predictions is not realised over sensible ranges of
+the predictors.  If it turns out that there is an issue, then we would explore
+alternatives.
+
+In this case, there is an issue - the model does indeed predict fewer than zero
+birds for some ranges of some of the predictors.  Hence, we will skip straight
+to the alternatives:
+
+- we could log-transform the response.
+$$
+log(y_i) = \mathcal{N}(\mu_i, \sigma^2)\\
+\mu_i = \beta_0 + \beta_1 X_1 + ...
+$$
+   - the expected values will be the mean of logs
+   - due to the transformation, both $\mu$ and $\sigma^2$ are modelled on a log
+     scale.
+$$
+y_i \sim{} \mathcal{N}(e^{X\beta}, e^{\sigma^2})\\
+$$
+   - when back-transforming, this implies that the variances will be unequal, in
+     fact they will increase with the mean.
+$$
+log(y_i) = X\beta + \varepsilon \hspace{1cm} \varepsilon \sim{} \mathcal{N}(0, \sigma^2)
+$$
+- we could model the data using a Gaussian distribution with a log link.
+$$
+y_i = \mathcal{N}(\mu_i, \sigma^2)\\
+log(\mu_i) = \beta_0 + \beta_1 X_1 + ...
+$$
+   - the expected value will he the log of means
+$$
+y_i \sim{} \mathcal{N}(e^{X\beta}, \sigma^2)\\
+$$
+   - the effects (slopes) become multiplicative
+$$
+log(y_i + \varepsilon) = \beta_0 + \beta_1 X_1 + ... \hspace{1cm} \varepsilon
+     \sim{} \mathcal{N}(0, \sigma^2)
+$$
+- we could model the data using a Gamma distribution with a log link.
+$$
+y_i = \mathcal{Gamma}(\mu_i, \sigma^2)\\
+log(\mu_i) = \beta_0 + \beta_1 X_1 + ...
+$$
+
+
+We will explore each of these options:
+
+- in doing so, we need to consider the patterns of variance 
+- linearity
+- (multi)collinearity - correlated predictors should not be in the same model
+  together lest they compete.
+
+
+
+## Scatterplot matrix
+
+
+## Specific scatterplots
+
+
+# Fit the model {.tabset .tabset-faded}
+
+## Gaussian (log-transformed)
+Model formula:
+
+$$
+log(y_i) = \mathcal{N}(\mu_i, \sigma^2)\\
+\mu_i = \beta_0 + \beta_1 X_1 + ...
+$$
+
+where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a
+model matrix representing the additive effects of the scaled versions of
+distance (ln), distance to the nearest large patch (ln), patch area (ln),
+grazing intensity, year of isolation and altitude on the abundance of forest
+birds.
+
+
+## Gaussian (log-link)
+
+Model formula:
+$$
+y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
+log(\mu_i) = \boldsymbol{\beta} \bf{X_i}
+$$
+
+where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the additive effects of
+the scaled versions of distance (ln), distance to the nearest large patch (ln), patch area (ln), grazing intensity, year of isolation and 
+altitude on the abundance of forest birds.
+
+
+## Gamma (log-link)
+
+Model formula:
+$$
+y_i = \mathcal{Gamma}(\mu_i, \sigma^2)\\
+log(\mu_i) = \beta_0 + \beta_1 X_1 + ...
+$$
+
+where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the additive effects of
+the scaled versions of distance (ln), distance to the nearest large patch (ln), patch area (ln), grazing intensity, year of isolation and 
+altitude on the abundance of forest birds.
+
+
+# Model validation {.tabset .tabset-faded}
+
+
+# Partial plots {.tabset .tabset-faded}
+
+
+# Caterpillar plot {.tabset .tabset-pills}
+
+## Gaussian (log-transformed)
+
+## Gaussian (log-link)
+
+## Gamma (log-link)
+
+
+# Model investigation / hypothesis testing {.tabset .tabset-faded}
+
+
+# Further analyses {.tabset .tabset-faded}
+
+From this point on, we will only proceed with the Gaussian (log-link) model.
+
+
+# Summary figures
+
+
+# References

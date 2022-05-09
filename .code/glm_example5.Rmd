@@ -1,0 +1,779 @@
+---
+title: "GLM Part5"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../public/resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../public/resources/references.bib
+---
+
+```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(car)       #for regression diagnostics
+library(broom)     #for tidy output
+library(ggfortify) #for model diagnostics
+library(sjPlot)    #for outputs
+library(knitr)     #for kable
+library(effects)   #for partial effects plots
+library(emmeans)   #for estimating marginal means
+library(ggeffects) #for plotting marginal means
+library(MASS)      #for glm.nb
+library(MuMIn)     #for AICc
+library(tidyverse) #for data wrangling
+library(modelr)    #for auxillary modelling functions
+library(performance) #for residuals diagnostics
+library(see)         #for plotting residuals
+library(DHARMa)    #for residual diagnostics plots
+library(patchwork) #grid of plots
+library(scales)    #for more scales
+```
+
+# Scenario
+
+Here is a modified example from @Quinn-2002-2002. Day and Quinn (1989) described
+an experiment that examined how rock surface type affected the recruitment of
+barnacles to a rocky shore. The experiment had a single factor, surface type,
+with 4 treatments or levels: algal species 1 (ALG1), algal species 2 (ALG2),
+naturally bare surfaces (NB) and artificially scraped bare surfaces (S). There
+were 5 replicate plots for each surface type and the response (dependent)
+variable was the number of newly recruited barnacles on each plot after 4 weeks.
+
+![Six-plated barnacle](../public/resources/barnacles.jpg){width="224" height="308"}
+
+Format of day.csv data files
+
+TREAT   BARNACLE
+------- ----------
+ALG1    27
+..      ..
+ALG2    24
+..      ..
+NB      9
+..      ..
+S       12
+..      ..
+
+-------------- ----------------------------------------------------------------------------------------------------------------------------------------------
+**TREAT**      Categorical listing of surface types. ALG1 = algal species 1, ALG2 = algal species 2, NB = naturally bare surface, S = scraped bare surface.
+**BARNACLE**   The number of newly recruited barnacles on each plot after 4 weeks.
+-------------- ----------------------------------------------------------------------------------------------------------------------------------------------
+
+# Read in the data
+
+As we are going to treat Treatment as a categorical predictor, we will
+specifically declare it as such straight after importing the data.
+
+```{r readData, results='markdown', eval=TRUE}
+day = read_csv('../public/data/day.csv', trim_ws=TRUE)
+glimpse(day)
+day <- day %>%
+  mutate(TREAT = factor(TREAT))
+```
+
+
+# Exploratory data analysis
+
+Model formula:
+$$
+y_i \sim{} \mathcal{Pois}(\lambda_i)\\
+\mu_i = \boldsymbol{\beta} \bf{X_i}
+$$
+
+where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a
+model matrix representing the intercept and treatment contrasts for the effects
+of Treatment on barnacle recruitment.
+ 
+```{r EDA, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, hidden=TRUE}
+ggplot(day, aes(y=BARNACLE, x=TREAT)) +
+    geom_boxplot() + 
+    geom_point(color='red')
+ggplot(day, aes(y=BARNACLE, x=TREAT)) +
+    geom_violin() +
+    geom_point(color='red')
+```
+
+# Fit the model
+
+<div class='HIDDEN'>
+
+Categorical predictors are actually treated as multiple regression.  We start by
+dummy coding the levels into separate vectors containing only 0's and 1's.  The
+following fabricated example should illustrate this process.  The first column
+represent a response (the numbers are not important for the dummy coding and
+thus they are excluded from the example).  Column X represents a categorical
+variable with three levels (A, B and C).  This could be dummy coded into three
+dummies (one for each level of the categorical predictor).
+
+| Y | X | Dummy 1 | Dummy 2 | Dummy 3 |
+|---|---|---------|---------|---------|
+| . | A | 1       | 0       | 0       |
+| . | A | 1       | 0       | 0       |
+| . | B | 0       | 1       | 0       |
+| . | B | 0       | 1       | 0       |
+| . | C | 0       | 0       | 1       |
+| . | C | 0       | 0       | 1       |
+
+So, we could construct the linear predictor of a regression model as:
+
+$$
+log(\mu_i) = \beta_0 + \beta_1 D1 + \beta_2 D2 + \beta_3 D3
+$$
+
+however, this would be an overparameterized model as there are four effects
+parameters to estimate from only three chunks of data (one per level of the
+categorical predictor).
+
+One option would be to drop the intercept:
+
+$$
+log(\mu_i) = \beta_1 D1 + \beta_2 D2 + \beta_3 D3
+$$
+Now each $\beta$ just represents the mean of each level of the categorical
+predictor.  Although this is perfectly valid, it is not a common way to express
+the model as it does not include any effects (differences).
+
+Another option is to re-parameterise this model such that the intercept
+represents the mean of the first level of the categorical predictor and then two
+additional $\beta$ parameters represent the differences between the first level
+and each of the remaining levels.  This parameterisation is called **treatment
+contrasts**.
+
+When we fit treatment contrasts, the first dummy variable is populated with 1's.
+
+| Y | X | Dummy 1 | Dummy 2 | Dummy 3 |
+|---|---|---------|---------|---------|
+| . | A | 1       | 0       | 0       |
+| . | A | 1       | 0       | 0       |
+| . | B | 1       | 1       | 0       |
+| . | B | 1       | 1       | 0       |
+| . | C | 1       | 0       | 1       |
+| . | C | 1       | 0       | 1       |
+$$
+log(\mu_i) = \beta_0 + \beta_2 D2 + \beta_3 D3
+$$
+
+Before actually fitting the model for our actual data, it might be instructive
+to estimate the effects via matrix multiplication so as to see the treatment
+contrasts in action.  Note, this approach is essentially Ordinary Least Squares
+regression, as and as such, assumes normality and homogeneity of variance.  As
+the response observations are counts, a Gaussian distribution might bot be the
+most appropriate choice.  Nevertheless, it will suffice for the purpose of
+illustration.
+
+```{r fitModel, results='markdown', eval=TRUE, hidden=TRUE}
+#Effects model
+## start by dummy coding the categorical predictor and expressing
+## the treatment effects as a model matrix.
+Xmat <- model.matrix(~TREAT, data=day)
+Xmat %>% head
+##latex-math-preview-expression
+# solve(X'X)X'Y
+solve(t(Xmat) %*% Xmat) %*% t(Xmat) %*% day$BARNACLE
+
+```
+Now lets fit the model.  As the response observations are counts, a Poisson
+distribution would be an obvious choice for the model distribution.  That said,
+it might be useful to fit the model with a Gaussian distribution with an
+Identity link (no transformation) to assist us in interpreting the estimated
+coefficients. TO emphasise, the Gaussian model will only be used as a learning
+aid, as a model, it does not have as much merit as a Poisson model.
+
+```{r fitModel1, results='markdown', eval=TRUE, hidden=TRUE}
+day.glm <- glm(BARNACLE~TREAT, data=day, family='gaussian')
+day.glm1 <- glm(BARNACLE~TREAT, data=day, family='poisson')
+```
+
+</div>
+
+# Model validation {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+## autoplot {.tabset .tabset-pills}
+
+### Gaussian
+
+```{r validateModel1a, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+day.glm %>% autoplot()
+```
+
+**Conclusion:**
+
+- there is not much alarming here
+- note, there is no value in displaying leverage and leverage based diagnostics
+  since leverage does not make much sense from categorical predictors.  An
+  observation must be in one of the levels - they cannot really be an outlier in
+  this dimension.
+
+### Poisson
+
+```{r validateModel1b, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+day.glm1 %>% autoplot()
+```
+
+**Conclusion:**
+
+- there is not much alarming here
+- note, there is no value in displaying leverage and leverage based diagnostics
+  since leverage does not make much sense from categorical predictors.  An
+  observation must be in one of the levels - they cannot really be an outlier in
+  this dimension.
+
+## influence.measures {.tabset .tabset-pills}
+
+### Gaussian
+
+```{r validateModel2a, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+day.glm %>% influence.measures()
+```
+
+### Poisson
+
+```{r validateModel2b, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+day.glm1 %>% influence.measures()
+```
+
+## Performance model checking {.tabset .tabset-pills}
+
+### Gaussian
+
+```{r validateModel3a, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+day.glm %>% performance::check_model()
+```
+
+**Conclusion:**
+
+- there is not much alarming here
+- note, there is no value in displaying leverage and leverage based diagnostics
+  since leverage does not make much sense from categorical predictors.  An
+  observation must be in one of the levels - they cannot really be an outlier in
+  this dimension.
+
+### Poisson
+
+```{r validateModel3b, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+day.glm1 %>% performance::check_model()
+```
+
+**Conclusion:**
+
+- there is not much alarming here
+- note, there is no value in displaying leverage and leverage based diagnostics
+  since leverage does not make much sense from categorical predictors.  An
+  observation must be in one of the levels - they cannot really be an outlier in
+  this dimension.
+
+## DHARMa residuals {.tabset .tabset-pills}
+
+### Gaussian
+
+```{r validateModel4a, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+day.resids <- day.glm %>% simulateResiduals(plot=TRUE)
+day.resids %>% testDispersion()
+```
+
+**Conclusion:**
+
+- there is not much alarming here
+
+### Poisson
+
+```{r validateModel4b, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+day.resids <- day.glm1 %>% simulateResiduals(plot=TRUE)
+day.resids %>% testDispersion()
+```
+
+**Conclusion:**
+
+- there is not much alarming here
+
+
+## Simple dispersion {.tabset .tabset-pills}
+
+### Gaussian
+
+```{r validateModel5a, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+## overdispersion
+1-pchisq(day.glm$deviance, day.glm$df.residual)
+day.glm$deviance/day.glm$df.residual
+```
+
+**Conclusion:**
+
+- this is of little value as it is not really possible for a Gaussian model to
+  be over-dispersed.  Lets ignore this...
+
+### Poisson
+
+```{r validateModel5b, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+1-pchisq(day.glm1$deviance, day.glm1$df.residual)
+day.glm1$deviance/day.glm1$df.residual
+```
+
+**Conclusion:**
+
+- there is no evidence for a lack of model fit
+- the estimated dispersion parameter is close to 1 suggesting no over-dispersion.
+
+##
+
+
+**Conclusion:**
+
+- the various diagnostics suggest that the Poisson model is likely to be
+  reliable.
+- on the basis of the diagnostics, the Gaussian model would also be reliable.
+  Nevertheless, we will only pursue the Gaussian model for the purpose of
+  illustrating and interpreting the treatment effects and not because it is an
+  appropriate model.
+
+</div>
+
+# Partial plots {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## plot_model {.tabset .tabset-pills}
+
+### Gaussian
+```{r partialPlots1a, results='markdown', eval=TRUE, fig.width=5, fig.height=5}
+day.glm %>% plot_model(type='eff', show.data=TRUE)
+```
+
+### Poisson
+
+```{r partialPlots1b, results='markdown', eval=TRUE, fig.width=5, fig.height=5}
+day.glm1 %>% plot_model(type='eff', show.data=TRUE)
+```
+
+## allEffects {.tabset .tabset-pills}
+
+### Gaussian
+```{r partialPlots2a, results='markdown', eval=TRUE, fig.width=5, fig.height=5}
+day.glm %>% allEffects() %>% plot
+```
+
+### Poisson
+
+```{r partialPlots2b, results='markdown', eval=TRUE, fig.width=5, fig.height=5}
+day.glm1 %>% allEffects() %>% plot
+allEffects(day.glm1, transformation=NULL) %>% plot
+```
+
+## ggpredict {.tabset .tabset-pills}
+
+Predicted values are always on the response scale
+
+### Gaussian
+
+```{r partialPlots3a, results='markdown', eval=TRUE, fig.width=5, fig.height=5}
+day.glm %>% ggpredict() %>% plot(add.data=TRUE, jitter=FALSE)
+```
+
+### Poisson
+
+```{r partialPlots3b, results='markdown', eval=TRUE, fig.width=5, fig.height=5}
+day.glm1 %>% ggpredict() %>% plot(add.data=TRUE, jitter=FALSE)
+## back.transform only applies to response transformations, not link functions
+## day.glm1 %>% ggpredict(back.transform = FALSE) %>% plot()
+```
+## ggemmeans {.tabset .tabset-pills}
+
+Predicted values are always on the response scale
+
+### Gaussian
+
+```{r partialPlots4a, results='markdown', eval=TRUE, fig.width=5, fig.height=5}
+day.glm %>% ggemmeans(~TREAT) %>% plot(add.data=TRUE, jitter=FALSE)
+```
+
+### Poisson
+
+```{r partialPlots4b, results='markdown', eval=TRUE, fig.width=5, fig.height=5}
+day.glm1 %>% ggemmeans(~TREAT) %>% plot(add.data=TRUE, jitter=FALSE)
+## back.transform only applies to response transformations, not link functions
+## day.glm1 %>% ggemmeans(back.transform = FALSE) %>% plot()
+```
+</div>
+
+# Model investigation / hypothesis testing {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+## Gaussian {.tabset .tabset-pills}
+
+### summary
+
+```{r summariseModel1a, results='markdown', eval=TRUE, hidden=TRUE}
+day.glm %>% summary()
+```
+
+**Conclusions**:
+
+- the estimated y-intercept (mean number of newly recruited barnacles in the
+  ALG1 group) is `r round(coef(day.glm)[1],2)`. 
+- there is expected to be `r round(coef(day.glm)[2], 2)` more newly recruited
+  barnacles on the ALG2 substrate than the ALG1 substrate.
+- there is expected to be `r round(coef(day.glm)[3], 2)` and 
+  `r round(coef(day.glm)[4], 2)` fewer newly recruited barnacles on the NB and S
+  substrates respectively than the ALG1 substrate.
+
+### confint
+
+```{r summariseModel1b, results='markdown', eval=TRUE, hidden=TRUE}
+day.glm %>% confint()
+```
+
+### tidy
+
+```{r summariseModelc, results='markdown', eval=TRUE, hidden=TRUE}
+day.glm %>% tidy(conf.int=TRUE)
+```
+
+### tab_model
+
+```{r summaryModel1d, results='markdown', eval=TRUE, hidden=TRUE}
+# warning this is only appropriate for html output
+day.glm %>% sjPlot::tab_model(show.se=TRUE, show.aic=TRUE)
+```
+
+## Poisson {.tabset .tabset-pills}
+
+### summary
+
+```{r summariseModel2a, results='markdown', eval=TRUE, hidden=TRUE}
+day.glm1 %>% summary()
+```
+
+**Conclusions**:
+
+- the estimated y-intercept (mean number of newly recruited barnacles in the
+  ALG1 group) is `r round(coef(day.glm1)[1],2)` (on the link scale). 
+- if however, we exponentiate it (to back-transform it onto the response scale),
+  then the expected number of newly recruited barnacles on the ALG1 substrate is
+  `r round(exp(coef(day.glm1)[1]),2)`
+- there is expected to be `r round(coef(day.glm1)[2], 2)` (link scale) more newly recruited
+  barnacles on the ALG2 substrate than the ALG1 substrate.
+- when back-transformed (via exponentiation), this equates to a 
+  `r round(exp(coef(day.glm1)[2]), 2)` fold increase in the number of newly
+  recruited barnacles from ALG1 to ALG2 substrate.  When expressed as a
+  percentage, this equates to a `r 100*(round(exp(coef(day.glm1)[2]), 2)-1)`% increase.
+- similarly, there is expected to be `r round(coef(day.glm1)[3], 2)` and 
+  `r round(coef(day.glm1)[3], 2)` fewer newly recruited barnacles on the NB and S
+  substrates respectively than the ALG1 substrate.  These equate to 
+  `r round(exp(coef(day.glm1)[3]), 2)` (`r 100*(round(exp(coef(day.glm1)[3]),2)-1)`%)
+  and 
+  `r round(exp(coef(day.glm1)[4]), 2)` (`r 100*(round(exp(coef(day.glm1)[4]),2)-1)`%)
+  fold declines respectively.
+
+
+### confint
+
+```{r summariseModel2b, results='markdown', eval=TRUE, hidden=TRUE}
+day.glm1 %>% confint()
+day.glm1 %>% confint() %>% exp()
+```
+
+### tidy
+
+```{r summariseMode2c, results='markdown', eval=TRUE, hidden=TRUE}
+day.glm1 %>% tidy(conf.int=TRUE)
+day.glm1 %>% tidy(conf.int=TRUE, exponentiate=TRUE) 
+```
+
+```{r summariseMode2d, results='markdown', eval=TRUE, hidden=TRUE}
+day.glm1 %>% tidy(conf.int=TRUE, exponentiate=TRUE) %>%
+  kable()
+```
+
+### tab_model
+
+```{r summaryModel3a, results='markdown', eval=TRUE, hidden=TRUE}
+# warning this is only appropriate for html output
+day.glm1 %>% sjPlot::tab_model(show.se=TRUE,show.aic=TRUE)
+```
+</div>
+
+# Predictions {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+The estimated coefficients as presented in the summary tables above highlight
+very specific comparisons.  However, there are other possible comparisons that
+we might be interested in.  For example, whist the treatment effects compare
+each of the substrate types against the first level (ALG1), we might also be
+interested in the differences between (for example) the two bare substrates (NB
+and S).
+
+To get at more of the comparisons we have two broad approaches:
+
+- compare all substrates to each other in a pairwise manner.
+   - importantly, given that the probability of a Type I error (falsely rejecting a
+  null hypothesis) is set at 0.05 per comparison, when there are multiple
+  comparisons, the family-wise Type I error (probability of at least one false
+  rejection amongst all comparisons) rate compounds.  It is important to
+  attempt to constrain this family-wise Type I error rate.  One approach to do
+  this is a Tukey's test.
+   - keep in mind that in order to constrain the family-wise Type I error rate at
+  0.05, the power of each individual comparison is reduced (individual Type II
+  error rates increased).
+- define a small set of specific comparisons.  There should be a maximum of
+  $p-1$ comparisons defined (where $p$ is the number of levels of the
+  categorical predictors) and each comparison should be independent of one another.
+
+We will now only pursue the Poisson model.
+</div>
+
+## Post-hoc test (Tukey's)
+
+<div class='HIDDEN'>
+
+```{r predictions, results='markdown', eval=TRUE, hidden=TRUE}
+## Comparisons on a fractional scale
+day.glm1 %>% emmeans(~TREAT, type='response') %>% pairs()
+## Including confidence intervals
+day.glm1 %>% emmeans(~TREAT, type='response') %>% pairs() %>% confint()
+## Confidence intervals and p-values
+day.glm1 %>% emmeans(~TREAT, type='response') %>% pairs() %>% summary(infer=TRUE)
+## Lets store this for late
+
+day.pairwise <- day.glm1 %>%
+    emmeans(~TREAT, type='response') %>%
+    pairs() %>%
+    summary(infer=TRUE) %>%
+    as.data.frame()
+```
+
+**Conclusions:**
+
+- the contrasts section of the output indicates that there is evidence of:
+- ALG1 has `r round(day.pairwise[2, 2], 2)` fold
+  (`r 1*(round(day.pairwise[2, 2], 2)-1)`) more newly recruited barnacles
+  than the NB substrate
+- ALG1 has `r round(day.pairwise[3, 2], 2)` fold
+  (`r 1*(round(day.pairwise[3, 2], 2)-1)`) more newly recruited barnacles
+  than the S substrate
+- ALG2 has `r round(day.pairwise[4, 2], 2)` fold
+  (`r 1*(round(day.pairwise[4, 2], 2)-1)`) more newly recruited barnacles
+  than the NB substrate
+- ALG2 has `r round(day.pairwise[5, 2], 2)` fold
+  (`r 1*(round(day.pairwise[5, 2], 2)-1)`) more newly recruited barnacles
+  than the S substrate
+- ALG1 was not found to be different to ALG2 and NB was not found to be
+  different to S  
+
+</div>
+
+## Planned contrasts
+
+Define your own
+
+Compare:
+
+a) ALG1 vs ALG2
+b) NB vs S
+c) average of ALG1+ALG2 vs NB+S
+
+<div class='HIDDEN'>
+
+| Levels | Alg1 vs Alg2 | NB vs S | Alg vs Bare |
+| ------ | ------------ | ------- | ----------- |
+| Alg1   | 1            | 0       | 0.5         |
+| Alg2   | -1           | 0       | 0.5         |
+| NB     | 0            | 1       | -0.5        |
+| S      | 0            | -1      | -0.5        |
+
+
+```{r planned, results='markdown', eval=TRUE, hidden=TRUE}
+##      Alg1_Alg2 NB_S Alg_Bare
+## ALG1         1    0      0.5
+## ALG2        -1    0      0.5
+## NB           0    1     -0.5
+## S            0   -1     -0.5
+cmat<-(cbind('Alg1_Alg2'=c(1,-1,0,0),
+              'NB_S'=c(0,0,1,-1),
+             'Alg_Bare'=c(0.5,0.5,-0.5,-0.5)))
+cmat
+```
+
+It is important that each of the comparisons are independent of one another.  We
+can test this by exploring the cross products of the contrast matrix.
+Independent comparisons will have a cross product of 0.  So if all of the values
+in the lower (and equivalently, the upper) triangle of the cross product matrix
+are 0, then all comparisons are independent.  Those that are not 0, indicate a
+lack of independence and a need to remove one of the comparisons from the set of
+contrasts.   Note, we can ignore the diagonal values.
+
+```{r planned1, results='markdown', eval=TRUE, hidden=TRUE}
+crossprod(cmat)
+```
+
+**Conclusions:**
+
+- all comparisons are independent
+
+
+```{r planned2, results='markdown', eval=TRUE, hidden=TRUE}
+day.glm1 %>% emmeans(~TREAT, contr=list(TREAT=cmat), type='response')
+day.glm1 %>% emmeans(~TREAT, type='response') %>%
+    contrast(method=list(TREAT=cmat)) %>%
+    summary(infer=TRUE)
+
+## what about absolute differences
+day.glm1 %>% emmeans(~TREAT, type='link') %>%
+    regrid() %>%
+    contrast(method=list(TREAT=cmat)) %>%
+    summary(infer=TRUE)
+
+```
+```{r planned3, results='markdown', eval=TRUE,echo=FALSE}
+day.planned <- day.glm1 %>% emmeans(~TREAT, type='response') %>%
+    contrast(method=list(TREAT=cmat)) %>%
+    summary(infer=TRUE)
+## day.planned <- day.glm1 %>%
+##   emmeans(~TREAT, contr=list(TREAT=cmat), type='response') %>%
+##   "["('contrasts') %>%
+##   as.data.frame
+```
+**Conclusions:**
+
+- the number of newly recruited barnacles was not found to be significantly
+  different between ALG1 and ALG2 substrates
+- the number of newly recruited barnacles was not found to be significantly
+  different between NB and S substrates  
+- the number of newly recruited barnacles was found to be significantly higher
+  in the algael substrates than the bare substrates
+  - the algael substrates attracted 
+  `r round(day.planned[3,2],2)` fold (`r 100*(round(day.planned[3,2],2)-1)`%) 
+  more newly recruited barnacles than the bare substrates.
+ 
+ If you want to express the comparisons on an absolute scale...
+ 
+```{r planned4, results='markdown', eval=TRUE,echo=FALSE}
+day.glm1 %>% emmeans(~TREAT) %>%
+    regrid() %>%
+    contrast(method=list(TREAT=cmat)) %>%
+    summary(infer = TRUE)
+```
+</div>
+
+# Summary figures {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## emmeans
+```{r summaryFig1a, results='markdown', eval=TRUE, hidden=TRUE}
+newdata <- day.glm1 %>% emmeans(~TREAT, type='response') %>%
+    as.data.frame
+newdata
+## A quick version
+ggplot(newdata, aes(y=rate, x=TREAT)) +
+    geom_pointrange(aes(ymin=asymp.LCL, ymax=asymp.UCL)) +
+    theme_classic()
+```
+
+A more thorough version that also includes the Tukey's test
+
+```{r summaryFig1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+g1 <- ggplot(newdata, aes(y=rate, x=TREAT)) +
+    geom_pointrange(aes(ymin=asymp.LCL, ymax=asymp.UCL))+
+    geom_point()+
+    scale_x_discrete('Treatment', breaks=c('ALG1','ALG2','NB','S'),
+       labels=c('Algae spp 1', 'Algae spp 2', 'Naturally bare', 'Scraped bare'))+
+    scale_y_continuous(expression(Number~of~newly~recruited~barnacles~(cm^2)))+
+    theme_classic()
+
+g2 <- day.pairwise %>%
+  ggplot(aes(y=ratio,  x=contrast)) +
+  geom_hline(yintercept=1,  linetype='dashed') +
+  geom_pointrange(aes(ymin=asymp.LCL,  ymax=asymp.UCL)) +
+  scale_y_continuous(trans=scales::log2_trans(), breaks=scales::breaks_log(base=2)) +
+  coord_flip(ylim=c(0.25, 4)) +
+  theme_classic()
+
+g1 + g2
+```
+
+## manually
+
+```{r summaryFig2a, results='markdown', eval=TRUE, hidden=TRUE}
+newdata = with(day,  data.frame(TREAT=levels(TREAT)))
+Xmat <- model.matrix(~TREAT,  newdata)
+coefs <- coef(day.glm1)
+
+fit <- as.vector(coefs %*% t(Xmat))
+se <- sqrt(diag(Xmat %*% vcov(day.glm1) %*% t(Xmat)))
+q <- qt(0.975, df=df.residual(day.glm1))
+newdata = newdata %>%
+  mutate(Fit = exp(fit),
+         Lower=exp(fit - q*se),
+         Upper=exp(fit+q*se))
+## A quick version
+ggplot(newdata, aes(y=Fit, x=TREAT)) +
+    geom_pointrange(aes(ymin=Lower, ymax=Upper)) +
+    theme_classic()
+```
+
+A more thorough version that also includes the Tukey's test
+
+```{r summaryFig2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+g1 <- ggplot(newdata, aes(y=Fit, x=TREAT)) +
+    geom_pointrange(aes(ymin=Lower, ymax=Upper))+
+    geom_point()+
+    scale_x_discrete('Treatment', breaks=c('ALG1','ALG2','NB','S'),
+       labels=c('Algae spp 1', 'Algae spp 2', 'Naturally bare', 'Scraped bare'))+
+    scale_y_continuous(expression(Number~of~newly~recruited~barnacles~(cm^2)))+
+    theme_classic()
+
+g2 <- day.pairwise %>%
+  ggplot(aes(y=ratio,  x=contrast)) +
+  geom_hline(yintercept=1,  linetype='dashed') +
+  geom_pointrange(aes(ymin=asymp.LCL,  ymax=asymp.UCL)) +
+  scale_y_continuous(trans=scales::log2_trans(), breaks=scales::breaks_log(base=2)) +
+  coord_flip(ylim=c(0.25, 4)) +
+  theme_classic()
+
+g1 + g2
+```
+
+</div>
+
+# References

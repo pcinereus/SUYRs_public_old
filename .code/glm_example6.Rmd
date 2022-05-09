@@ -1,0 +1,595 @@
+---
+title: "GLM Part6"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../public/resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../public/resources/references.bib
+---
+
+```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(car)       #for regression diagnostics
+library(broom)     #for tidy output
+library(ggfortify) #for model diagnostics
+library(sjPlot)    #for outputs
+library(knitr)     #for kable
+library(effects)   #for partial effects plots
+library(emmeans)   #for estimating marginal means
+library(ggeffects) #for plotting marginal means
+library(MASS)      #for glm.nb
+library(MuMIn)     #for AICc
+library(tidyverse) #for data wrangling
+library(modelr)    #for auxillary modelling functions
+library(DHARMa)    #for residual diagnostics plots
+library(performance) #for residuals diagnostics
+library(see)         #for plotting residuals
+library(patchwork) #grid of plots
+library(scales)    #for more scales
+```
+
+# Scenario
+
+An ecologist studying a rocky shore at Phillip Island, in southeastern
+Australia, was interested in how clumps of intertidal mussels are maintained
+[@Quinn-1988-137]. In particular, he wanted to know how densities of adult
+mussels affected recruitment of young individuals from the plankton. As with
+most marine invertebrates, recruitment is highly patchy in time, so he expected
+to find seasonal variation, and the interaction between season and density -
+whether effects of adult mussel density vary across seasons - was the aspect of
+most interest.
+
+The data were collected from four seasons, and with two densities of adult
+mussels. The experiment consisted of clumps of adult mussels attached to the
+rocks. These clumps were then brought back to the laboratory, and the number of
+baby mussels recorded. There were 3-6 replicate clumps for each density and
+season combination.
+
+Format of quinn.csv data files
+
+SEASON   DENSITY   RECRUITS   SQRTRECRUITS   GROUP
+-------- --------- ---------- -------------- ------------
+Spring   Low       15         3.87           SpringLow
+..       ..        ..         ..             ..
+Spring   High      11         3.32           SpringHigh
+..       ..        ..         ..             ..
+Summer   Low       21         4.58           SummerLow
+..       ..        ..         ..             ..
+Summer   High      34         5.83           SummerHigh
+..       ..        ..         ..             ..
+Autumn   Low       14         3.74           AutumnLow
+..       ..        ..         ..             ..
+
+------------------ --------------------------------------------------------------------------------------------
+**SEASON**         Categorical listing of Season in which mussel clumps were collected ­ independent variable
+**DENSITY**        Categorical listing of the density of mussels within mussel clump ­ independent variable
+**RECRUITS**       The number of mussel recruits ­ response variable
+**SQRTRECRUITS**   Square root transformation of RECRUITS - needed to meet the test assumptions
+**GROUPS**         Categorical listing of Season/Density combinations - used for checking ANOVA assumptions
+------------------ --------------------------------------------------------------------------------------------
+	
+![Mussel](../public/resources/mussels.jpg){height="300"}
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+quinn = read_csv('../public/data/quinn.csv', trim_ws=TRUE)
+glimpse(quinn)
+summary(quinn)
+```
+
+Since we intend to model both SEASON and DENSITY as categorical variables, 
+we need to explicitly declare them as factors.
+
+```{r dataprep, results='markdown', eval=TRUE, hidden=TRUE}
+quinn = quinn %>% mutate(SEASON = factor(SEASON, levels=c('Spring', 'Summer', 'Autumn', 'Winter')),
+                         DENSITY = factor(DENSITY))
+```
+
+# Exploratory data analysis
+
+Model formula:
+$$
+\begin{align}
+y_i &\sim{} \mathcal{Pois}(\lambda_i)\\
+ln(\mu_i) &= \boldsymbol{\beta} \bf{X_i}\\[1em]
+\end{align}
+$$
+                                           
+where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a
+model matrix representing the intercept and effects of season, density and their
+interaction on mussel recruitment.
+
+```{r eda, hidden=TRUE}
+ggplot(quinn, aes(y=RECRUITS, x=SEASON, fill=DENSITY)) +
+     geom_boxplot()
+```
+
+**Conclusions:**
+
+- there is clear evidence of non-homogeneity of variance
+- specifically, there is evidence that the variance is related to the mean in
+  that boxplots that are lower on the y-axis (low mean) also have lower variance
+  (shorter boxplots)
+- this might be expected for count data and we might consider that a Poisson
+  distribution (which assumes that mean and variance are equal - and thus
+  related in a very specific way).
+
+Lets mimic the effect of using a log link, by using log scaled y-axis.
+
+```{r eda1, hidden=TRUE}
+ggplot(quinn, aes(y=RECRUITS, x=SEASON, fill=DENSITY)) +
+  geom_boxplot() +
+  scale_y_log10()
+```
+
+**Conclusions:**
+
+- that is an improvement
+
+
+# Fit the model {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+We actually have a couple of initial options:
+
+1. log transform the response variable (RECRUITS) and fit against a Gaussian
+   distribution.  If we do so, we would need to amend the response for cases
+   when the response is zero (as the log of 0 is not defined).  We could simply
+   add 1 to each count before log transformed.
+   
+2. fit against a Poisson distribution with a log link
+
+## log-transformed and Gaussian
+
+I will include this, just for an illustration on how to fit such a model, we
+will not pursue it further.
+
+```{r fitModel1a, hidden=TRUE}
+quinn.glmG <- glm(log(RECRUITS+1) ~ DENSITY*SEASON, data=quinn, family=gaussian)
+```
+
+## Poisson
+```{r fitModel1b, hidden=TRUE}
+quinn.glm <- glm(RECRUITS ~ DENSITY*SEASON, data=quinn,
+                  family=poisson(link='log'))
+```
+
+</div>
+
+# Model validation {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## autoplot
+
+```{r ValidateModel1a, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+quinn.glm %>% autoplot(which=1:6)
+```
+
+**Conclusions:**
+
+- most of these diagnostics seem ok, however, there is one observation (#34)
+  that has a very high residual (and thus Cook's D)
+
+## Performance model checking
+
+```{r ValidateModel1b, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+quinn.glm %>% performance::check_model()
+quinn.glm %>% performance::check_overdispersion()
+quinn.glm %>% performance::check_zeroinflation()
+```
+
+**Conclusions:**
+
+- there is evidence of over-dispersion
+
+## DHARMa residuals
+
+```{r ValidateModel1c, results='markdown', eval=TRUE, fig.width=8, fig.height=5, hidden=TRUE}
+quinn.resid <- quinn.glm %>% simulateResiduals(plot=TRUE)
+quinn.resid %>% testResiduals()
+quinn.resid %>% testDispersion()
+quinn.resid %>% testZeroInflation()
+#testTemporalAutocorrelation(quinn.glm1)
+```
+
+**Conclusions:**
+
+- there is evidence of over-dispersion and outliers
+- there is also some evidence of zero-inflation
+
+## Simple dispersion
+
+```{r modelValidation1d, results='markdown', eval=TRUE, hidden=TRUE}
+## goodness of fit
+1-pchisq(quinn.glm$deviance, df=quinn.glm$df.residual)
+## any evidence of overdispersion
+quinn.glm$deviance/quinn.glm$df.residual
+```
+
+**Conclusions:**
+
+- there is evidence of over-dispersion
+
+## Simple zero-inflation
+
+```{r modelValidation3, results='markdown', eval=TRUE, hidden=TRUE}
+quinn %>% group_by(SEASON, DENSITY) %>%
+  summarise(Zeros = sum(RECRUITS==0), 
+            Prop = Zeros/n(),
+            Mean = mean(RECRUITS))
+x <- rpois(100000,lambda = 2.67)
+tab.1 <- table(x == 0)
+tab.1/sum(tab.1)
+
+## OR,  over the entire data
+## is this due to excessive zeros (zero-inflation)
+tab <- table(quinn$RECRUITS == 0)
+tab/sum(tab)
+## 5% is not many.. so it cant be zero-inflated
+## how many 0's would we expect from a poisson distribution with a mean similar to our mean
+mean(quinn$RECRUITS)
+x <- rpois(100000, lambda = mean(quinn$RECRUITS))
+tab.1 <- table(x == 0)
+tab.1/sum(tab.1)
+```
+
+**Conclusion:**
+
+- although at the level of the entire dataset, there is no evidence for
+  excessive zeros, if we explore this separately within each SEASON by DENSITY 
+  combination, we see that for the Winter/Low density group, the proportion of
+  zeros is very high.
+
+</div>
+
+# Different model {.tabset .tabset-faded}
+<div class='HIDDEN'>
+
+In light of the discovery that the Poisson model was over-dispersed, we will
+explore a negative binomial model.  Rather than assume that the variance is
+equal to the mean (dispersion of 1), the dispersion parameter is estimated.
+Negative binomial models are also able to account for some level of
+zero-inflation. 
+
+## Fit model
+
+```{r fitModel2, results='markdown', eval=TRUE, hidden=TRUE}
+quinn.nb <- MASS::glm.nb(RECRUITS ~ DENSITY*SEASON, data=quinn)
+```
+
+## Model validation {.tabset .tabset-pills}
+
+### autoplot
+
+```{r modelValidation4a, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+quinn.nb %>% autoplot(which=1:6)
+```
+
+### Performance model checking
+
+```{r modelValidation4b, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+quinn.nb %>% performance::check_model()
+```
+
+### DHARMa residuals
+
+```{r modelValidation4c, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE}
+quinn.resid <- quinn.nb %>% simulateResiduals(plot=TRUE)
+quinn.resid %>% testResiduals()
+quinn.resid %>% testDispersion()
+quinn.resid %>% testZeroInflation()
+```
+
+### Simple dispersion
+
+```{r modelValidation5, results='markdown', eval=TRUE, hidden=TRUE}
+## goodness of fit
+1-pchisq(quinn.nb$deviance, df=quinn.nb$df.residual)
+## any evidence of overdispersion
+quinn.nb$deviance/quinn.nb$df.residual
+```
+
+### Model comparison
+
+```{r modelValidation6, results='markdown', eval=TRUE, hidden=TRUE}
+AICc(quinn.glm, quinn.nb)
+```
+
+**Conclusions:**
+
+- on the basis of AICc, the negative binomial model would be considered better
+  than the Poisson model.
+
+#
+
+**Conclusions:**
+
+- there is no evidence that the negative binomial model is over-dispersed or
+  zero-inflated
+- all other diagnostics are also improved
+
+</div>
+
+# Partial plots {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+## plot_model
+
+```{r partialplots1a, results='markdown', eval=TRUE, hidden=TRUE}
+quinn.nb %>% plot_model(type='eff',  terms=c('SEASON', 'DENSITY'))
+```
+
+## allEffects
+
+```{r partialplots1b, results='markdown', eval=TRUE, hidden=TRUE}
+quinn.nb %>% allEffects() %>% plot(multiline=TRUE, ci.style='bar')
+quinn.nb %>% allEffects() %>% plot(multiline=TRUE, ci.style='bar', type='link')
+```
+
+## ggpredict
+
+```{r partialplots1c, results='markdown', eval=TRUE, hidden=TRUE}
+quinn.nb %>% ggpredict(c('SEASON', 'DENSITY')) %>% plot()
+```
+
+## ggemmeans
+
+```{r partialplots1d, results='markdown', eval=TRUE, hidden=TRUE}
+quinn.nb %>% ggemmeans(~SEASON*DENSITY) %>% plot()
+```
+
+</div>
+
+# Model investigation / hypothesis testing {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## summary
+
+Lets start with the estimated coefficients on the link (log) scale
+
+```{r summarys1a, results='markdown', eval=TRUE, hidden=TRUE}
+quinn.nb %>% summary()
+```
+
+**Conclusions:**
+
+- the intercept represents the estimated mean of the first combination of Season
+  (Spring) and Density (High). On the link scale this is 
+  `r round(coef(quinn.nb)[1], 2)`
+- the difference between Low and High adult density in spring is 
+  `r round(coef(quinn.nb)[2], 2)`, although this is not significant
+- the difference between Spring and Summer for High adult density is 
+  `r round(coef(quinn.nb)[3], 2)`
+- the difference between Spring and Autumn for High adult density is 
+  `r round(coef(quinn.nb)[4], 2)`
+- the difference between Spring and Winter for High adult density is 
+  `r round(coef(quinn.nb)[5], 2)`
+- if there were no interactions, we would expect the Low density Summer
+  recruitment to be the additive of the main effects (Low and Summer).  However,
+  the modelled mean is `r -1*round(coef(quinn.nb)[6], 2)` less than the additive
+  effects would have expected.  This value is significantly different to 0,
+  indicating that there is evidence that the density effect in Summer is
+  different to that in Spring.
+ - the density effect in Autumn and Winter were not found to be significantly
+  different from what you would expect from an additive model. 
+
+
+## tidy
+
+```{r summarys1b, results='markdown', eval=TRUE, hidden=TRUE}
+quinn.nb %>% tidy(conf.int=TRUE)
+```
+
+Now if we exponentiate to put these estimates on the response scale:
+
+```{r summarys1c, results='markdown', eval=TRUE, hidden=TRUE}
+quinn.nb %>% tidy(conf.int=TRUE, exponentiate=TRUE)
+```
+
+**Conclusions:**
+
+- the intercept represents the estimated mean of the first combination of Season
+  (Spring) and Density (High). On the response scale this is 
+  `r round(exp(coef(quinn.nb)[1]), 2)`
+- there is a `r round(coef(quinn.nb)[2], 2)` fold difference between High and Low
+  adult density in spring, although this is not significant
+- there is a `r round(coef(quinn.nb)[3], 2)` fold difference between Summer and
+  Spring for High adult density 
+- there is a `r round(coef(quinn.nb)[4], 2)` fold difference between Autumn and
+  Spring for High adult density 
+- there is a `r round(coef(quinn.nb)[5], 2)` fold difference between Winter and
+  Spring for High adult density   
+- the modelled mean for Summer Low density is `r -1*round(coef(quinn.nb)[6], 2)`
+  fold different (less than half) that we would have expected in the absence of interactions
+ - the density effect in Autumn and Winter were not found to be significantly
+  different from what you would expect from an additive model. 
+
+If we compare the above to the over-dispersed Poisson, we see that the estimates
+are the same, but that the standard errors are underestimated and hence the
+confidence intervals are narrower (for over-dispersed model)
+
+```{r summarys1d, results='markdown', eval=TRUE, hidden=TRUE}
+quinn.glm %>% tidy(conf.int=TRUE, exponentiate=TRUE)
+```
+
+</div>
+
+# Predictions
+
+<div class='HIDDEN'>
+
+In order to tease apart the significant interaction(s), it might be useful to
+explore the effect of Density separately within each Season.
+
+```{r mainEffects1a, results='markdown', eval=TRUE, hidden=TRUE}
+quinn.nb %>% emmeans(~DENSITY|SEASON) %>% pairs() %>% summary(infer=TRUE)
+```
+
+```{r mainEffects1a1, results='markdown', eval=TRUE, echo=FALSE, hidden=TRUE}
+eff <- quinn.nb %>%
+    emmeans(~DENSITY|SEASON, type='link') %>%
+    pairs() %>%
+    as.data.frame()
+```
+
+**Conclusions:**
+
+- there is no evidence of an effect of Density in either Spring, Autumn or Winter
+- in Summer, recruitment is `r round(eff[2, 3], 2)` higher (on a log scale) in
+  High Density populations than Low Density populations.
+
+
+Or we could express these on a factor (fold/ratio) scale.
+
+```{r mainEffects1b, results='markdown', eval=TRUE, hidden=TRUE}
+quinn.nb %>% emmeans(~DENSITY|SEASON, type='response') %>% pairs()
+```
+
+Or perhaps even an absolute difference scale.
+
+```{r mainEffects1b2, results='markdown', eval=TRUE, hidden=TRUE}
+quinn.nb %>% emmeans(~DENSITY|SEASON, type='response') %>% regrid() %>% pairs()
+```
+
+**Conclusions:**
+
+- there is no evidence of an effect of Density in either Spring, Autumn or Winter
+- in Summer, recruitment is `r round(exp(eff[2, 3]), 2)` fold higher in
+  High Density populations than Low Density populations.
+
+```{r mainEffects1c, results='markdown', eval=TRUE, hidden=TRUE}
+quinn.nb %>% emmeans(~DENSITY|SEASON,  type='response') %>% pairs() %>% summary(infer=TRUE)
+```
+
+It might be useful to capture these pairwise contrasts so that we can graph them
+as a caterpillar plot.
+
+In the following, I will present the effects on a log (based 2) axis.  Such a
+scale presents doubling and halving (etc) equidistant from 1.
+
+```{r mainEffects1d, results='markdown', eval=TRUE, hidden=TRUE}
+eff <- quinn.nb %>%
+    emmeans(~DENSITY|SEASON,  type='response') %>%
+    pairs() %>%
+    summary(infer=TRUE) %>%
+    as.data.frame
+
+eff %>%
+    ggplot(aes(y=ratio, x=SEASON)) +
+    geom_pointrange(aes(ymin=asymp.LCL, ymax=asymp.UCL)) +
+    geom_text(aes(label=sprintf("p=%.2f", p.value)), nudge_x=0.25) +
+    geom_hline(yintercept=1, linetype='dashed') +
+    scale_x_discrete(name='') +
+    scale_y_continuous(name='Density effect (High vs Low)', trans=scales::log2_trans(),
+                       breaks=scales::breaks_log(base=2)) +
+    coord_flip(ylim=c(0.25, 4)) +
+    theme_classic()
+```
+
+</div>
+
+# Summary figures
+As these summarise only involve categorical predictors, there is no need to
+define a prediction grid.  For categorical predictors, the default grid will
+assume that you are interested in all the levels of the categorical predictors.
+
+<div class='HIDDEN'>
+
+```{r summaryFig, results='markdown', eval=TRUE, hidden=TRUE}
+newdata <- emmeans(quinn.nb, ~DENSITY|SEASON, type = 'response') %>% as.data.frame
+head(newdata)
+ggplot(newdata, aes(y = response, x = SEASON, fill = DENSITY)) +
+    geom_pointrange(aes(ymin = asymp.LCL, ymax = asymp.UCL, shape = DENSITY),
+                    position = position_dodge(width = 0.2)) +
+    theme_classic() +
+    theme(axis.title.x = element_blank(),
+          legend.position = c(0.01,1), legend.justification = c(0,1)) +
+    annotate(geom = 'text', x = 'Summer', y = 70, label = '*', size = 7) +
+    scale_shape_manual(values = c(21, 22))
+```
+
+</div>
+
+
+<div class='HIDDEN'>
+
+# Zero-inflated model
+Unfortunately, `DHARMa` and `performance` do not work with `zeroinf()` models.
+
+```{r zeroinflate, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=5}
+library(pscl)
+library(glmmTMB)
+quinn.zip <- zeroinfl(RECRUITS ~ DENSITY*SEASON | 1, data=quinn,  dist='poisson')
+quinn.zip <- glmmTMB(RECRUITS ~ DENSITY*SEASON, zi=~1, data=quinn,  family=poisson())
+quinn.resid <- quinn.zip %>% simulateResiduals(plot=TRUE)
+## The following does not work due to a lack of pearson residuals for glmmTMB
+## quinn.zip %>% performance::check_overdispersion()
+
+quinn.zip %>% summary()
+#tidy(quinn.zip,  conf.int=TRUE, exponentiate = TRUE)
+exp(-3.0037)
+
+## quinn.zip1 <- zeroinfl(RECRUITS ~ DENSITY*SEASON | SEASON, data=quinn,  dist='poisson')
+quinn.zip1 <- glmmTMB(RECRUITS ~ DENSITY*SEASON, zi=~SEASON, data=quinn,  family=poisson())
+quinn.resid <- quinn.zip1 %>% simulateResiduals(plot=TRUE)
+
+quinn.zip1 %>% summary()
+plogis(-20.468)
+plogis(-20.468 + 19.214)
+
+
+## quinn.zinb <- zeroinfl(RECRUITS ~ DENSITY*SEASON | 1, data=quinn,  dist='negbin')
+quinn.zinb <- glmmTMB(RECRUITS ~ DENSITY*SEASON, zi=~SEASON, data=quinn,  family=nbinom2())
+quinn.resid <- quinn.zinb %>% simulateResiduals(plot=TRUE)
+AICc(quinn.zip,  quinn.zip1, quinn.zinb)
+
+quinn.zinb %>% summary()
+```
+
+</div>
+# References

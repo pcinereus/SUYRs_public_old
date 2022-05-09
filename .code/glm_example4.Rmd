@@ -1,0 +1,1301 @@
+---
+title: "GLM Part4"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../public/resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../public/resources/references.bib
+---
+
+```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(car)       #for regression diagnostics
+library(broom)     #for tidy output
+library(ggfortify) #for model diagnostics
+library(sjPlot)    #for outputs
+library(knitr)     #for kable
+library(effects)   #for partial effects plots
+library(emmeans)   #for estimating marginal means
+library(ggeffects) #for partial effects plots
+library(MASS)      #for glm.nb
+library(MuMIn)     #for AICc
+library(DHARMa)    #for residual diagnostics plots
+library(modelr)    #for auxillary modelling functions
+library(performance) #for residuals diagnostics
+library(see)         #for plotting residuals
+library(patchwork)   #for grids of plots
+library(tidyverse) #for data wrangling
+```
+
+# Scenario
+
+@Loyn-1987-1987 modelled the abundance of forest birds with six predictor
+variables (patch area, distance to nearest patch, distance to nearest larger
+patch, grazing intensity, altitude and years since the patch had been isolated).
+
+![Regent honeyeater](../public/resources/regent_honeyeater_small.jpg){width="165" height="240"}
+
+Format of loyn.csv data file
+
+ABUND   DIST   LDIST   AREA   GRAZE   ALT   YR.ISOL
+------- ------ ------- ------ ------- ----- ---------
+..      ..     ..      ..     ..      ..    ..
+
+------------- ------------------------------------------------------------------------------
+**ABUND**     Abundance of forest birds in patch- response variable
+**DIST**      Distance to nearest patch - predictor variable
+**LDIST**     Distance to nearest larger patch - predictor variable
+**AREA**      Size of the patch - predictor variable
+**GRAZE**     Grazing intensity (1 to 5, representing light to heavy) - predictor variable
+**ALT**       Altitude - predictor variable
+**YR.ISOL**   Number of years since the patch was isolated - predictor variable
+------------- ------------------------------------------------------------------------------
+
+The aim of the analysis is to investigate the effects of a range of predictors
+on the abundance of forest birds.
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+loyn <- read_csv('../public/data/loyn.csv', trim_ws=TRUE)
+glimpse(loyn)
+```
+
+# Exploratory data analysis {.tabset .tabset-faded}
+
+
+This is an application of multiple regression.  The response variable in this
+instance is a little awkward in that it appears to be an average of multiple
+point quadrats rather than a pure count.  Central limits theorem suggests that
+averages should follow a normal distribution and thus we might expect that it is
+reasonable to model this bird abundance against a Gaussian distribution.
+However, this has the potential to become problematic since a Gaussian
+distribution can extend below zero whereas this is clearly not logical for bird
+abundance.  As a result, we might find the at the model can predict bird
+abundances less than zero.   
+
+If this were our own analysis, we might first attempt to model these data
+against a Gaussian distribution and then explore whether this could lead to
+negative predictions - it may be that the bird abundances are sufficiently high
+that the issue of negative predictions is not realised over sensible ranges of
+the predictors.  If it turns out that there is an issue, then we would explore
+alternatives.
+
+In this case, there is an issue - the model does indeed predict fewer than zero
+birds for some ranges of some of the predictors.  Hence, we will skip straight
+to the alternatives:
+
+- we could log-transform the response.
+$$
+log(y_i) = \mathcal{N}(\mu_i, \sigma^2)\\
+\mu_i = \beta_0 + \beta_1 X_1 + ...
+$$
+   - the expected values will be the mean of logs
+   - due to the transformation, both $\mu$ and $\sigma^2$ are modelled on a log
+     scale.
+$$
+y_i \sim{} \mathcal{N}(e^{X\beta}, e^{\sigma^2})\\
+$$
+   - when back-transforming, this implies that the variances will be unequal, in
+     fact they will increase with the mean.
+$$
+log(y_i) = X\beta + \varepsilon \hspace{1cm} \varepsilon \sim{} \mathcal{N}(0, \sigma^2)
+$$
+- we could model the data using a Gaussian distribution with a log link.
+$$
+y_i = \mathcal{N}(\mu_i, \sigma^2)\\
+log(\mu_i) = \beta_0 + \beta_1 X_1 + ...
+$$
+   - the expected value will he the log of means
+$$
+y_i \sim{} \mathcal{N}(e^{X\beta}, \sigma^2)\\
+$$
+   - the effects (slopes) become multiplicative
+$$
+log(y_i + \varepsilon) = \beta_0 + \beta_1 X_1 + ... \hspace{1cm} \varepsilon
+     \sim{} \mathcal{N}(0, \sigma^2)
+$$
+- we could model the data using a Gamma distribution with a log link.
+$$
+y_i = \mathcal{Gamma}(\mu_i, \sigma^2)\\
+log(\mu_i) = \beta_0 + \beta_1 X_1 + ...
+$$
+
+
+We will explore each of these options:
+
+- in doing so, we need to consider the patterns of variance 
+- linearity
+- (multi)collinearity - correlated predictors should not be in the same model
+  together lest they compete.
+
+
+
+## Scatterplot matrix
+
+<div class='HIDDEN'>
+A scatterplot matrix plots each variable against each other.  It is useful to
+provide boxplots in the diagonals to help explore the distributions.
+
+
+```{r EDA, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8}
+scatterplotMatrix(~ABUND+DIST+LDIST+AREA+GRAZE+ALT+YR.ISOL, data=loyn,
+                  diagonal = list(method='boxplot'))
+```
+**Conclusions:**
+
+- on the top row, ABUND is on the y-axis of each plot
+- the second plot from the top left has DIST on the x-axis
+- it is clear from looking at the boxplots on the diagonals that some of the
+  potential predictors (DIST, LDIST and AREA) are not normally distributed.
+- it might be worth log-transforming these variables.  Not only might this help
+  normalise those predictors, it might also improve the linearity between the
+  response and those predictors.
+- we will reserve all other judgements of assumptions until we explore these log-transformations
+
+```{r EDA1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8}
+scatterplotMatrix(~ABUND+log(DIST)+log(LDIST)+log(AREA)+GRAZE+ALT+YR.ISOL, data=loyn,
+                  diagonal = list(method='boxplot'))
+```
+**Conclusions:**
+
+- normality now seems to be satisfied
+- there is no evidence of real non-linearity in the relationships depicted in
+  plots along the top row (that relate the response to the various predictors)
+- it does appear that some of the predictors might be correlated to one another
+  (DIST and LDIST in particular).  It may be necessary for use to chose between
+  these two measures of between-patch distance. 
+
+</div>
+
+## Specific scatterplots
+
+<div class='HIDDEN'>
+The GRAZE predictor represents grazing intensity.  Note, this was essentially a
+categorical variable with levels 1 (no grazing) through to 5 (intense grazing).
+Although we could attempt to model this as a continuous predictor, such an
+approach would assume that this is a linear scale in which the interval between
+each successive level is the same.  That is, the difference between level 1 and
+2 is the same as the difference between 4 and 5 etc.  Since, these were
+categories, such spacing is not guaranteed.  It might therefore be better to
+model this variable as a categorical variable. 
+
+Finally, even in the absence of issues relating to the range of each predictor
+within each level of GRAZE, it might still be advantageous to centre each
+predictor. Centering will provide computational advantages and also ensure that
+the intercept has a more useful meaning. 
+
+```{r prepareData, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8}
+loyn <- loyn %>% mutate(fGRAZE=factor(GRAZE))
+```
+As the model now includes both continuous and categorical predictors, unless we
+include interactions between the categorical variable and each of the continuous
+predictors, we must also assume that partial slopes of each predictor is the
+same for each level of the categorical predictor (homogeneity of slopes). 
+
+We will explore this with just two of the predictors (DIST and AREA - both on
+log axes)
+
+```{r EDA2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5, warning=FALSE, message=FALSE}
+p1=ggplot(loyn, aes(y=ABUND, x=DIST, color=fGRAZE)) +
+    geom_smooth(method='lm') +
+  scale_x_log10()
+
+p2=ggplot(loyn, aes(y=ABUND, x=AREA, color=fGRAZE)) +
+    geom_smooth(method='lm') +
+  scale_x_log10()
+
+p1 + p2
+```
+
+**Conclusions:**
+
+- homogeneity of slopes seems to be satisfied for DIST, but possibly not for
+  AREA.
+- hence, the rate of change associated with AREA for the first GRAZE level might
+  not be a good representation of the rate of change for other GRAZE levels.
+- also of some concern is that the range of AREA is not the same for each GRAZE
+  level - this can also lead to problems
+
+One thing we could do to address the different ranges is scale (standardise) or
+re-scale AREA separately within each GRAZE level.
+
+```{r EDA3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5, warning=FALSE, message=FALSE}
+## might need to consider scaling separtely within each group
+loyn <- loyn %>%
+  group_by(fGRAZE) %>%
+  mutate(rslAREA = scales::rescale(log(AREA)),
+         slAREA = scale(log(AREA))) %>%
+  ungroup()
+
+ggplot(loyn, aes(y=ABUND, x=slAREA, color=fGRAZE)) +
+    geom_smooth(method='lm') #+
+
+ggplot(loyn, aes(y=ABUND, x=rslAREA, color=fGRAZE)) +
+    geom_smooth(method='lm') #+
+     
+```
+
+For the current example, we will treat the continuous predictors as if they have
+satisfied this assumption.
+
+</div>
+
+# Fit the model {.tabset .tabset-faded}
+
+## Gaussian (log-transformed)
+Model formula:
+
+$$
+log(y_i) = \mathcal{N}(\mu_i, \sigma^2)\\
+\mu_i = \beta_0 + \beta_1 X_1 + ...
+$$
+
+where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a
+model matrix representing the additive effects of the scaled versions of
+distance (ln), distance to the nearest large patch (ln), patch area (ln),
+grazing intensity, year of isolation and altitude on the abundance of forest
+birds.
+
+<div class='HIDDEN'>
+```{r fitModel1, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm <- glm(log(ABUND)~scale(log(DIST), scale=FALSE) + scale(log(LDIST), scale=FALSE) +
+                scale(log(AREA), scale=FALSE)+
+                fGRAZE + scale(ALT, scale=FALSE) + scale(YR.ISOL, scale=FALSE),
+              data=loyn, family=gaussian())
+```
+
+</div>
+
+## Gaussian (log-link)
+
+Model formula:
+$$
+y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
+log(\mu_i) = \boldsymbol{\beta} \bf{X_i}
+$$
+
+where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the additive effects of
+the scaled versions of distance (ln), distance to the nearest large patch (ln), patch area (ln), grazing intensity, year of isolation and 
+altitude on the abundance of forest birds.
+
+<div class='HIDDEN'>
+
+To centre a predictor in R, we can use the `scale` function.  This function is
+able to centre and scale a vector, or only centre a vector (by indicating that
+it should not scale).  In addition to Centering (and/or scaling if instructed),
+this function will also store the original mean (and standard deviation) of the
+original predictor as attributes, thereby facilitating back transformations. 
+
+```{r fitModel2, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm1 <- glm(ABUND~scale(log(DIST), scale=FALSE) + scale(log(LDIST), scale=FALSE) +
+                  scale(log(AREA), scale=FALSE)+
+                  fGRAZE + scale(ALT, scale=FALSE) + scale(YR.ISOL, scale=FALSE),
+              data=loyn, family=gaussian(link='log'))
+```
+
+</div>
+
+## Gamma (log-link)
+
+Model formula:
+$$
+y_i = \mathcal{Gamma}(\mu_i, \sigma^2)\\
+log(\mu_i) = \beta_0 + \beta_1 X_1 + ...
+$$
+
+where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the additive effects of
+the scaled versions of distance (ln), distance to the nearest large patch (ln), patch area (ln), grazing intensity, year of isolation and 
+altitude on the abundance of forest birds.
+
+<div class='HIDDEN'>
+```{r fitModel3, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm2 <- glm(ABUND~scale(log(DIST), scale=FALSE) + scale(log(LDIST), scale=FALSE) +
+                   scale(log(AREA), scale=FALSE)+
+                   fGRAZE + scale(ALT, scale=FALSE) + scale(YR.ISOL, scale=FALSE),
+               data=loyn, family=Gamma(link='log'))
+```
+
+</div>
+
+# Model validation {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## VIF {.tabset .tabset-pills}
+
+### Gaussian (log-transformed)
+
+```{r validateModel1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6}
+loyn.glm %>% vif()
+## If any terms have df>1, then Generalized VIF calculated
+## This is the inflation in size compared to what would be expected if orthogonal
+```
+
+### Gaussian (log-link)
+```{r validateModel1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6}
+loyn.glm1 %>% vif()
+## If any terms have df>1, then Generalized VIF calculated
+## This is the inflation in size compared to what would be expected if orthogonal
+```
+
+### Gamma (log-link)
+```{r validateModel1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6}
+loyn.glm2 %>% vif()
+## If any terms have df>1, then Generalized VIF calculated
+## This is the inflation in size compared to what would be expected if orthogonal
+```
+
+
+## autoplot{.tabset .tabset-pills}
+
+### Gaussian (log-transformed)
+```{r validateModel2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, warning=FALSE, message=FALSE}
+loyn.glm %>% autoplot(which=1:6)
+```
+
+### Gaussian (log-link)
+```{r validateModel2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, warning=FALSE, message=FALSE}
+loyn.glm1 %>% autoplot(which=1:6)
+```
+
+### Gamma (log-link)
+```{r validateModel2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, warning=FALSE, message=FALSE}
+loyn.glm2 %>% autoplot(which=1:6)
+```
+
+## Performance check models{.tabset .tabset-pills}
+
+### Gaussian (log-transformed)
+```{r validateModel3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, warning=FALSE, message=FALSE}
+loyn.glm %>% performance::check_model()
+```
+
+### Gaussian (log-link)
+```{r validateModel3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, warning=FALSE, message=FALSE}
+loyn.glm1 %>% performance::check_model()
+```
+
+### Gamma (log-link)
+```{r validateModel3c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, warning=FALSE, message=FALSE}
+loyn.glm2 %>% performance::check_model()
+```
+
+
+## DHARMa residuals{.tabset .tabset-pills}
+
+### Gaussian (log-transformed)
+```{r validateModel4a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=6, warning=FALSE, message=FALSE}
+loyn.resid <- loyn.glm %>% simulateResiduals(plot=TRUE)
+```
+
+### Gaussian (log-link)
+```{r validateModel4b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=6, warning=FALSE, message=FALSE}
+loyn.resid1 <- loyn.glm1 %>% simulateResiduals(plot=TRUE)
+```
+
+### Gamma (log-link)
+```{r validateModel4c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=6, warning=FALSE, message=FALSE}
+loyn.resid2 <- loyn.glm2 %>% simulateResiduals(plot=TRUE)
+```
+
+## residuals per predictor{.tabset .tabset-pills} 
+
+### Gaussian (log-transformed)
+```{r validateModel5a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=9, fig.height=6, warning=FALSE, message=FALSE}
+loyn = loyn %>%
+  mutate(Resids = loyn.resid$scaledResiduals)
+
+loyn %>%
+  mutate(clDIST=scale(log(DIST), scale=FALSE),
+         clLDIST=scale(log(LDIST), scale=FALSE),
+         clAREA=scale(log(AREA), scale=FALSE),
+         cALT=scale(ALT, scale=FALSE),
+         cYR.ISOL=scale(YR.ISOL, scale=FALSE)) %>%
+  dplyr::select(clDIST, clLDIST, clAREA, fGRAZE, cALT, cYR.ISOL, Resids) %>%
+  pivot_longer(c(clDIST, clLDIST, clAREA, cALT, cYR.ISOL)) %>%
+  ggplot() +
+  geom_point(aes(y=Resids,  x=value, color=fGRAZE)) +
+  facet_wrap(~name, scales='free')
+
+```
+
+### Gaussian (log-link)
+```{r validateModel5b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=9, fig.height=6, warning=FALSE, message=FALSE}
+loyn = loyn %>%
+  mutate(Resids = loyn.resid1$scaledResiduals)
+
+loyn %>%
+  mutate(clDIST=scale(log(DIST), scale=FALSE),
+         clLDIST=scale(log(LDIST), scale=FALSE),
+         clAREA=scale(log(AREA), scale=FALSE),
+         cALT=scale(ALT, scale=FALSE),
+         cYR.ISOL=scale(YR.ISOL, scale=FALSE)) %>%
+  dplyr::select(clDIST, clLDIST, clAREA, fGRAZE, cALT, cYR.ISOL, Resids) %>%
+  pivot_longer(c(clDIST, clLDIST, clAREA, cALT, cYR.ISOL)) %>%
+  ggplot() +
+  geom_point(aes(y=Resids,  x=value, color=fGRAZE)) +
+  facet_wrap(~name, scales='free')
+
+```
+
+### Gamma (log-link)
+```{r validateModel5c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=9, fig.height=6, warning=FALSE, message=FALSE}
+loyn = loyn %>%
+  mutate(Resids = loyn.resid2$scaledResiduals)
+
+loyn %>%
+  mutate(clDIST=scale(log(DIST), scale=FALSE),
+         clLDIST=scale(log(LDIST), scale=FALSE),
+         clAREA=scale(log(AREA), scale=FALSE),
+         cALT=scale(ALT, scale=FALSE),
+         cYR.ISOL=scale(YR.ISOL, scale=FALSE)) %>%
+  dplyr::select(clDIST, clLDIST, clAREA, fGRAZE, cALT, cYR.ISOL, Resids) %>%
+  pivot_longer(c(clDIST, clLDIST, clAREA, cALT, cYR.ISOL)) %>%
+  ggplot() +
+  geom_point(aes(y=Resids,  x=value, color=fGRAZE)) +
+  facet_wrap(~name, scales='free')
+
+```
+
+
+</div>
+
+# Partial plots {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## plot_model {.tabset .tabset-pills}
+
+### Gaussian (log-transformed)
+```{r plotModel3a1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE}
+## Effects
+loyn.glm %>% plot_model(type='eff', show.data=TRUE, dot.size=0.5) %>% plot_grid
+## Predictions
+loyn.glm %>% plot_model(type='pred', show.data=TRUE, dot.size=0.5) %>% plot_grid
+```
+
+```{r plotModel3a2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE}
+## We can sort of do part of the backtransforms - but only partly..
+plot_grid(list(
+    loyn.glm %>% plot_model(type='eff',  terms='DIST') + scale_x_log10(),
+    loyn.glm %>% plot_model(type='eff',  terms='LDIST') + scale_x_log10(),
+    loyn.glm %>% plot_model(type='eff',  terms='AREA') + scale_x_log10(),
+    loyn.glm %>% plot_model(type='eff',  terms='fGRAZE'),
+    loyn.glm %>% plot_model(type='eff',  terms='ALT'),
+    loyn.glm %>% plot_model(type='eff',  terms='YR.ISOL')  
+))
+```
+
+### Gaussian (log-link)
+
+```{r plotModel3a3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE}
+## Effects
+loyn.glm1 %>% plot_model(type='eff', show.data=TRUE, dot.size=0.5) %>% plot_grid
+## Predictions
+loyn.glm1 %>% plot_model(type='pred', show.data=TRUE, dot.size=0.5) %>% plot_grid
+```
+
+```{r plotModel3a4, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE}
+## We can sort of do part of the backtransforms - but only partly..
+plot_grid(list(
+    loyn.glm1 %>% plot_model(type='eff',  terms='DIST') + scale_x_log10(),
+    loyn.glm1 %>% plot_model(type='eff',  terms='LDIST') + scale_x_log10(),
+    loyn.glm1 %>% plot_model(type='eff',  terms='AREA') + scale_x_log10(),
+    loyn.glm1 %>% plot_model(type='eff',  terms='fGRAZE'),
+    loyn.glm1 %>% plot_model(type='eff',  terms='ALT'),
+    loyn.glm1 %>% plot_model(type='eff',  terms='YR.ISOL')  
+))
+```
+
+### Gamma (log-link)
+
+```{r plotModel3a5, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE}
+## Effects
+loyn.glm2 %>% plot_model(type='eff', show.data=TRUE, dot.size=0.5) %>% plot_grid
+## Predictions
+loyn.glm2 %>% plot_model(type='pred', show.data=TRUE, dot.size=0.5) %>% plot_grid
+```
+
+```{r plotModel3a6, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE}
+## We can sort of do part of the backtransforms - but only partly..
+plot_grid(list(
+    loyn.glm2 %>% plot_model(type='eff',  terms='DIST') + scale_x_log10(),
+    loyn.glm2 %>% plot_model(type='eff',  terms='LDIST') + scale_x_log10(),
+    loyn.glm2 %>% plot_model(type='eff',  terms='AREA') + scale_x_log10(),
+    loyn.glm2 %>% plot_model(type='eff',  terms='fGRAZE'),
+    loyn.glm2 %>% plot_model(type='eff',  terms='ALT'),
+    loyn.glm2 %>% plot_model(type='eff',  terms='YR.ISOL')  
+))
+```
+
+
+## allEffects {.tabset .tabset-pills}
+
+### Gaussian (log-transformed)
+
+```{r plotModel3c1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE}
+loyn.glm %>% allEffects(residuals=TRUE) %>% plot(type='response')
+```
+
+### Gaussian (log-link)
+
+```{r plotModel3c2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE}
+loyn.glm1 %>% allEffects(residuals=TRUE) %>% plot(type='response')
+```
+
+### Gamma (log-link)
+
+```{r plotModel3c3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE}
+loyn.glm2 %>% allEffects(residuals=TRUE) %>% plot(type='response')
+```
+
+## ggpredict {.tabset .tabset-pills}
+
+### Gaussian (log-transformed)
+```{r plotModel3d1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE}
+loyn.glm %>% ggpredict() %>%
+  plot(add.data=TRUE, facet=TRUE, jitter=FALSE)
+```
+
+### Gaussian (log-link)
+```{r plotModel3d2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE}
+loyn.glm1 %>% ggpredict() %>%
+  plot(add.data=TRUE, facet=TRUE, jitter=FALSE)
+```
+
+### Gamma (log-link)
+```{r plotModel3d3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE}
+loyn.glm2 %>% ggpredict() %>%
+  plot(add.data=TRUE, facet=TRUE, jitter=FALSE)
+```
+
+## ggemmeans {.tabset .tabset-pills}
+
+### Gaussian (log-transformed)
+
+```{r plotModel3e1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE}
+loyn.glm %>% ggemmeans(~AREA|fGRAZE) %>%
+    plot(add.data=TRUE, jitter=FALSE)
+
+loyn.glm %>% ggemmeans(~AREA|fGRAZE) %>%
+    plot(add.data=TRUE, jitter=FALSE) +
+    scale_x_log10()
+## unfortunately, it is not currently possible to influence the
+## prediction grid so we are stuck with awful looking figures.
+```
+
+### Gaussian (log-link)
+
+```{r plotModel3e2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE}
+loyn.glm1 %>% ggemmeans(~AREA|fGRAZE) %>%
+    plot(add.data=TRUE, jitter=FALSE) 
+
+loyn.glm1 %>% ggemmeans(~AREA|fGRAZE) %>%
+    plot(add.data=TRUE, jitter=FALSE) +
+    scale_x_log10()
+## unfortunately, it is not currently possible to influence the
+## prediction grid so we are stuck with awful looking figures.
+```
+
+### Gamma (log-link)
+
+```{r plotModel3e3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE}
+loyn.glm2 %>% ggemmeans(~AREA|fGRAZE) %>%
+    plot(add.data=TRUE, jitter=FALSE)
+
+loyn.glm2 %>% ggemmeans(~AREA|fGRAZE) %>%
+    plot(add.data=TRUE, jitter=FALSE) +
+    scale_x_log10()
+## unfortunately, it is not currently possible to influence the
+## prediction grid so we are stuck with awful looking figures.
+```
+</div>
+
+# Caterpillar plot {.tabset .tabset-pills}
+
+## Gaussian (log-transformed)
+```{r plotModel4a1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=4, fig.height=4, message=FALSE, warning=FALSE}
+loyn.glm %>% plot_model(type='est')
+loyn.glm %>% plot_model(type='est', transform='exp', show.values=TRUE)
+```
+
+## Gaussian (log-link)
+```{r plotModel4a2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=4, fig.height=4, message=FALSE, warning=FALSE}
+loyn.glm1 %>% plot_model(type='est')
+loyn.glm1 %>% plot_model(type='est', transform='exp', show.values=TRUE)
+```
+
+## Gamma (log-link)
+```{r plotModel4a3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE}
+loyn.glm2 %>% plot_model(type='est')
+loyn.glm2 %>% plot_model(type='est', transform='exp', show.values=TRUE)
+```
+
+
+# Model investigation / hypothesis testing {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## summary {.tabset .tabset-pills}
+
+### Gaussian (log-transformed)
+```{r summaryModel1a, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm %>% summary()
+```
+
+**Conclusions**:
+
+- the estimated y-intercept (bird abundance on the log scale at Grazing level 1,
+  when all other centred continuous predictors are at their average value of 0) is 
+  `r round(coef(loyn.glm)[1],2)`.  Note that this is still on the link (log)
+  scale.
+- if however, we exponentiate it (to back-transform it onto the response scale),
+  then the bird abundance in Grazing level 1 at the average level of all other
+  predictors is `r round(exp(coef(loyn.glm)[1]),2)`
+- associated with each of the continuous predictors is a partial slope.  Each
+  partial slope is
+  the rate of change between bird abundance and the associated predictor (on the
+  log scale due to the link and based on 1 unit change in the predictor on the
+  scale of the predictor).  For example, for every one unit change in centred log
+  patch Area, bird abundance is expected to increase by (log) 
+  `r round(coef(loyn.glm)[4], 2)`.
+- if we back transform this slope (by exponentiation), we get a partial slope
+  for centred log Area of
+  `r round(exp(coef(loyn.glm)[4]), 2)`.  This is interpreted as - for every
+  1 unit increase in (scaled log) Area, the bird abundance is expected to increase 
+  `r round(exp(coef(loyn.glm)[4]), 2)` fold.  That is, there is a 
+  `r 100*(round(exp(coef(loyn.glm)[4]), 2)-1)` percent increase per 1 unit
+  increase in centred log Area.
+- on the basis of one unit level changes, Grazing level 5 (actually, the difference between
+  Grazing level 1 and 5), has the largest relative effect on bird abundances
+  followed by centred log Area.
+- the $R^2$ value is `r round(MuMIn::r.squaredLR(loyn.glm), 2)`. Hence,
+`r 100*round(MuMIn::r.squaredLR(loyn.glm), 2)` percent of the variation in
+number of Individuals is explained by its relationship to Area.
+
+### Gaussian (log-link)
+```{r summaryModel1b, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm1 %>% summary()
+```
+
+**Conclusions**:
+
+- the estimated y-intercept (bird abundance on the log scale at Grazing level 1,
+  when all other centred continuous predictors are at their average value of 0) is 
+  `r round(coef(loyn.glm1)[1],2)`.  Note that this is still on the link (log)
+  scale.
+- if however, we exponentiate it (to back-transform it onto the response scale),
+  then the bird abundance in Grazing level 1 at the average level of all other
+  predictors is `r round(exp(coef(loyn.glm1)[1]),2)`
+- associated with each of the continuous predictors is a partial slope.  Each
+  partial slope is
+  the rate of change between bird abundance and the associated predictor (on the
+  log scale due to the link and based on 1 unit change in the predictor on the
+  scale of the predictor).  For example, for every one unit change in centred log
+  patch Area, bird abundance is expected to increase by (log) 
+  `r round(coef(loyn.glm1)[4], 2)`.
+- if we back transform this slope (by exponentiation), we get a partial slope
+  for centred log Area of
+  `r round(exp(coef(loyn.glm1)[4]), 2)`.  This is interpreted as - for every
+  1 unit increase in (scaled log) Area, the bird abundance is expected to increase 
+  `r round(exp(coef(loyn.glm1)[4]), 2)` fold.  That is, there is a 
+  `r 100*(round(exp(coef(loyn.glm1)[4]), 2)-1)` percent increase per 1 unit
+  increase in centred log Area.
+- on the basis of one unit level changes, Grazing level 5 (actually, the difference between
+  Grazing level 1 and 5), has the largest relative effect on bird abundances
+  followed by centred log Area.
+- the $R^2$ value is `r round(MuMIn::r.squaredLR(loyn.glm1), 2)`. Hence,
+`r 100*round(MuMIn::r.squaredLR(loyn.glm1), 2)` percent of the variation in
+number of Individuals is explained by its relationship to Area.
+
+### Gamma (log-link)
+```{r summaryModel1c, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm2 %>% summary()
+```
+
+**Conclusions**:
+
+- the estimated y-intercept (bird abundance on the log scale at Grazing level 1,
+  when all other centred continuous predictors are at their average value of 0) is 
+  `r round(coef(loyn.glm2)[1],2)`.  Note that this is still on the link (log)
+  scale.
+- if however, we exponentiate it (to back-transform it onto the response scale),
+  then the bird abundance in Grazing level 1 at the average level of all other
+  predictors is `r round(exp(coef(loyn.glm2)[1]),2)`
+- associated with each of the continuous predictors is a partial slope.  Each
+  partial slope is
+  the rate of change between bird abundance and the associated predictor (on the
+  log scale due to the link and based on 1 unit change in the predictor on the
+  scale of the predictor).  For example, for every one unit change in centred log
+  patch Area, bird abundance is expected to increase by (log) 
+  `r round(coef(loyn.glm2)[4], 2)`.
+- if we back transform this slope (by exponentiation), we get a partial slope
+  for centred log Area of
+  `r round(exp(coef(loyn.glm2)[4]), 2)`.  This is interpreted as - for every
+  1 unit increase in (scaled log) Area, the bird abundance is expected to increase 
+  `r round(exp(coef(loyn.glm2)[4]), 2)` fold.  That is, there is a 
+  `r 100*(round(exp(coef(loyn.glm2)[4]), 2)-1)` percent increase per 1 unit
+  increase in centred log Area.
+- on the basis of one unit level changes, Grazing level 5 (actually, the difference between
+  Grazing level 1 and 5), has the largest relative effect on bird abundances
+  followed by centred log Area.
+- the $R^2$ value is `r round(MuMIn::r.squaredLR(loyn.glm2), 2)`. Hence,
+`r 100*round(MuMIn::r.squaredLR(loyn.glm2), 2)` percent of the variation in
+number of Individuals is explained by its relationship to Area.
+
+
+
+
+
+## confint {.tabset .tabset-pills}
+### Gaussian (log-transformed)
+```{r summaryModel2a, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm %>% confint()
+loyn.glm %>% confint() %>% exp()
+```
+
+### Gaussian (log-link)
+```{r summaryModel2b, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm1 %>% confint()
+loyn.glm1 %>% confint() %>% exp()
+```
+
+### Gamma (log-link)
+```{r summaryModel2c, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm2 %>% confint()
+loyn.glm2 %>% confint() %>% exp()
+```
+
+## tidy {.tabset .tabset-pills}
+### Gaussian (log-transformed)
+
+We can tidy the summary table and express the coefficients on the response
+scale.  Recall that when we do so, the partial slopes are no longer additive.
+Rather, they represent a multiplicative change.  Furthermore, effects greater
+than 1 represent an increase, whereas effects less than 1 represent an increase.
+Hence, an effect of 0.5 represents a halving.
+
+Note also that confidence intervals should be interpreted relative to a value of
+1 after such a back-transformation.
+
+```{r summaryModel3a, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm %>% tidy(conf.int=TRUE, exponentiate = TRUE)
+loyn.glm %>% glance()
+```
+
+### Gaussian (log-link)
+We can tidy the summary table and express the coefficients on the response
+scale.  Recall that when we do so, the partial slopes are no longer additive.
+Rather, they represent a multiplicative change.  Furthermore, effects greater
+than 1 represent an increase, whereas effects less than 1 represent an increase.
+Hence, an effect of 0.5 represents a halving.
+
+Note also that confidence intervals should be interpreted relative to a value of
+1 after such a back-transformation.
+
+```{r summaryModel3b, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm1 %>% tidy(conf.int=TRUE, exponentiate = TRUE)
+loyn.glm1 %>% glance()
+```
+
+### Gamma (log-link)
+We can tidy the summary table and express the coefficients on the response
+scale.  Recall that when we do so, the partial slopes are no longer additive.
+Rather, they represent a multiplicative change.  Furthermore, effects greater
+than 1 represent an increase, whereas effects less than 1 represent an increase.
+Hence, an effect of 0.5 represents a halving.
+
+Note also that confidence intervals should be interpreted relative to a value of
+1 after such a back-transformation.
+```{r summaryModel3c, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm2 %>% tidy(conf.int=TRUE, exponentiate = TRUE)
+loyn.glm2 %>% glance()
+```
+
+## std.coef {.tabset .tabset-pills}
+### Gaussian (log-transformed)
+
+The magnitude of (partial) slopes are dependent on the scale of each of the
+underlying predictors.  Therefore, we cannot glean the relative importance of
+each of the predictors relative to each other simply by comparing their partial
+slopes.  We could refit the model including scaled (and centred) versions of the
+predictors - this would put all partial slopes on a common scale thereby
+permitting comparisons.  However, this would then make the individual partial
+slopes difficult to interpret with respect to the observed predictor scale.  For
+example, what does a change of one unit on a scaled scale mean in real world
+measurements?
+
+The alternative is to fit the model with unscaled (yet centred) predictors (as
+we have done) and then standardise the partial slopes by multiplication with the
+respective predictor standard deviations divided by the standard deviation of
+the response.  This can be performed by the `std.coef()` function in the `MuMIn`
+package.  This function can also correct for a certain degree of
+(multi)collinearity by standardising by partial standard deviation.
+
+
+```{r summaryModel4a, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm %>% std.coef(partial.sd=TRUE)
+```
+
+### Gaussian (log-ink)
+
+The magnitude of (partial) slopes are dependent on the scale of each of the
+underlying predictors.  Therefore, we cannot glean the relative importance of
+each of the predictors relative to each other simply by comparing their partial
+slopes.  We could refit the model including scaled (and centred) versions of the
+predictors - this would put all partial slopes on a common scale thereby
+permitting comparisons.  However, this would then make the individual partial
+slopes difficult to interpret with respect to the observed predictor scale.  For
+example, what does a change of one unit on a scaled scale mean in real world
+measurements?
+
+The alternative is to fit the model with unscaled (yet centred) predictors (as
+we have done) and then standardise the partial slopes by multiplication with the
+respective predictor standard deviations divided by the standard deviation of
+the response.  This can be performed by the `std.coef()` function in the `MuMIn`
+package.  This function can also correct for a certain degree of
+(multi)collinearity by standardising by partial standard deviation.
+
+
+```{r summaryModel4b, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm1 %>% std.coef(partial.sd=TRUE)
+```
+
+### Gamma (log-link)
+
+The magnitude of (partial) slopes are dependent on the scale of each of the
+underlying predictors.  Therefore, we cannot glean the relative importance of
+each of the predictors relative to each other simply by comparing their partial
+slopes.  We could refit the model including scaled (and centred) versions of the
+predictors - this would put all partial slopes on a common scale thereby
+permitting comparisons.  However, this would then make the individual partial
+slopes difficult to interpret with respect to the observed predictor scale.  For
+example, what does a change of one unit on a scaled scale mean in real world
+measurements?
+
+The alternative is to fit the model with unscaled (yet centred) predictors (as
+we have done) and then standardise the partial slopes by multiplication with the
+respective predictor standard deviations divided by the standard deviation of
+the response.  This can be performed by the `std.coef()` function in the `MuMIn`
+package.  This function can also correct for a certain degree of
+(multi)collinearity by standardising by partial standard deviation.
+
+
+```{r summaryModel4c, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm2 %>% std.coef(partial.sd=TRUE)
+```
+
+</div>
+
+# Further analyses {.tabset .tabset-faded}
+
+From this point on, we will only proceed with the Gaussian (log-link) model.
+
+<div class='HIDDEN'>
+
+```{r modelSelection1, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm1 %>% MuMIn::r.squaredLR()
+loyn.glm1 %>% AIC()
+loyn.glm1 %>% AICc()
+```
+
+So far, the model that we have fit includes six predictors.  If we had more
+predictors, providing the predictors were not correlated to any other predictor,
+we could add additional predictors in an attempt to further reduce the
+unexplained variance.  However, as we do so, the complexity of the model
+increases (particularly if we start introducing interactions).
+
+If we keep in mind that linear models are intentionally low dimensional
+representations that are intended to provide insights into the effects of major
+drivers and are not intended to reconstruct the full system complexity, we should
+realise that proposing overly complex models goes contrary to these intentions.
+Even the model we already have might be considered overly complex.  Some of the
+predictors were found to have very little impact on the response, so a far
+question might be whether all the predictors really are necessary.
+
+
+## Option 1 - dredge
+
+It is possible to fit all combinations of models containing the predictors and
+then comparing the fit of each of the models via information criterion.  This is
+referred to as dredging.
+
+```{r modelSelection2, results='markdown', eval=TRUE, hidden=TRUE}
+# Option 1 - dredge
+loyn.glm1 <- loyn.glm1 %>% update(na.action=na.fail)
+#options(width=1000)
+loyn.glm1 %>% dredge(rank = "AICc")
+```
+
+**Conclusions:**
+
+- each of the 64 combinations of model have been run and then ranked from lowest
+  AICc to highest. 
+- each of the models included an intercept - the estimated value of which is
+  listed in the `(Intercept)` column of the output. 
+- the 'best' model (model with lowest AICc), includes (all on log scale):
+   - intercept
+   - `fGRAZE`
+   - `scale(log(AREA))`
+ 
+We might consider the model with the lowest AICc to be the 'best' model.  Any
+other models that are within 2 units would be considered equivalent and thus we
+might consider the 'best' model to be the model with the fewest used degrees of
+freedom (simplicity) that is within 2 units of the model with the lowest AICc.
+In this case, the model with the lowest AICc is also the most simple of the top
+ranking models - and thus the choice might seem clear.
+
+The problem with this approach is that mathematically, one model must bubble up
+to be the 'best' model.  This model is not necessarily the most sensible or
+appropriate model, it is just the model that the data supports most strongly.  
+
+It is also a form of 'p-hacking' in which an exhaustive set of models are fit in
+order to find something that is 'significant'.  Given that the probability of a
+type I error (finding a significant effect when it does not occur) for any
+single model is 0.05 (5%) and that this compounds with
+multiple tests, the 'best' model might actually be a type I error.
+
+## option 2 - model averaging
+
+When we run the full model, the partial effects are the estimated effects of
+each predictor, holding the remaining predictors constant. In this way, each of
+the partial effects is an effect standardising across all the other predictors.
+This means that the value (and uncertainty) of any estimated partial slope is
+partly dependent on which other predictors are present in the model.
+
+Given this, it might be interesting to explore a range of models and use the
+average of their parameter estimates.  This is called **model averaging**.
+Rather than average across all models, we instead only average across models
+with reasonable fit.  We can consider well fitting models as those that are
+within (for example) 4 units of AICc.  Furthermore, rather than simply average
+all the models together equally, we can weight the averages by their relative
+AICc such that models with lower AICc have higher weights.
+
+```{r modelSelection3, results='markdown', eval=TRUE, hidden=TRUE}
+## 2. model averaging
+loyn.av <- loyn.glm1 %>%
+    dredge(rank = "AICc") %>%
+    model.avg(subset=delta<=4)
+loyn.av %>% summary()
+loyn.av %>% confint()
+```
+
+**Conclusions:**
+
+- Model-average coefficients are the weighted model averages that assume that
+  all predictors are present in all models and that when they are actually
+  absent (e.g ALT, DIST, LDIST and YR.ISOL in the top ranked model from
+  dredge), the estimated partial slope is assumed to be 0.  This has the effect
+  of biasing the averaged parameters towards 0.
+- Conditional average coefficients only average over the models in which the
+  parameter (predictor) is actually present.  These models have a tendency to be
+  biased away from zero.
+  
+
+## Option 3 - explore a small set of models
+
+Arguably, if our intentions are to gain insights into what influences bird
+abundances in fragmented forests, rather than fit a model with a large range of
+predictors, it might be better to fit a number of models, each of which focuses
+on a different aspect of the avian ecology.
+
+Rather than search for the single 'best' model, we could propose a small set of
+ecologically plausible candidate models and then see which ones are supported by
+the data.
+For example, in the current context of birds in fragmented forests, we could
+propose the following models:
+
+1. a model that focuses on the connectivity between patches (DIST and LDIST)
+2. a model that focuses on the patch habitats (AREA, fGRAZE)
+3. a model that focuses on the patch use and history (AREA, fGRAZE, YR.ISOL)
+4. a model that focuses on climate (ALT)
+5. a NULL model.  The NULL model can be used as a reference point.  Any model
+  that has an AICc less (by at least 2 units) than (and thus better) than the NULL model must have
+  some inferential support.  Any model with AICc the same or higher than the
+  NULL, clearly has no support and would not be considered a useful model
+
+Note, these are all models that could be proposed prior to even collecting the
+data and all can be explained ecologically.  By contrast, dredging by chance
+could suggest a model that has a combination of predictors that are very
+difficult to interpret and explain.
+
+As the above models contain fewer predictors, there is now scope to include
+interactions.
+
+```{r modelSelection4, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm1a <- loyn.glm1 %>% update(.~scale(log(DIST), scale=FALSE)*scale(log(LDIST), scale=FALSE))
+loyn.glm1b <- loyn.glm1 %>% update(.~scale(log(AREA), scale=FALSE) * fGRAZE)
+loyn.glm1c <- loyn.glm1 %>% update(.~scale(log(AREA), scale=FALSE) * fGRAZE * scale(YR.ISOL, scale=FALSE))
+loyn.glm1d <- loyn.glm1 %>% update(.~scale(ALT, scale=FALSE))
+loyn.null <- loyn.glm1 %>% update(.~1)
+AICc(loyn.glm1a, loyn.glm1b, loyn.glm1c, loyn.glm1d, loyn.null)
+AICc(loyn.glm1a, loyn.glm1b, loyn.glm1c, loyn.glm1d, loyn.null) %>%
+    mutate(Model=row.names(.), delta=AICc-AICc[5]) %>%
+    dplyr::select(Model, everything())
+## Support for model 2, 3 and 4, no support for model 1
+```
+**Conclusions:**
+
+- there is support for models 2, 3 and 4
+- there is very little support for a model focusing on the connectivity between
+  patches.  Perhaps the patches are sufficiently close that the lack of direct
+  corridors is not a barrier for the birds (which can fly after all!).
+- patch habitat and history are however, potentially important drivers of bird
+  abundances as is (to a lesser degree) altitude.
+
+
+```{r modelSelection5, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.glm1b %>% summary()
+```
+
+**Conclusions:**
+
+- now that we have interactions in the model, we need to consider these interactions prior to
+  any attempts to interpret the main effects. 
+- that said, as this is the first time in the series that we have considered
+  interactions, it is worth going through each of the coefficients to consider
+  their interpretations.  Keep in mind, that all parameters are still on a log
+  scale.
+- in the presence of a categorical predictor, many of the main effects (as well
+  as the intercept), only directly pertain to the first (reference) level of
+  this categorical predictor (in this case level 1 of Grazing).
+- the intercept of `r round(coef(loyn.glm1b)[1],2)` indicates that the for
+  Grazing level 1, when all of the other predictors are at their averages, the
+  expected number of birds (on a log scale) is `r round(coef(loyn.glm1b)[2],1)`
+- for Grazing level 1, the partial slope associated with (centred log
+  transformed) Area is `r round(coef(loyn.glm1b)[2],2)`.
+- the difference between the intercept of the first Grazing level and the second
+  Grazing level is `r round(coef(loyn.glm1b)[3],2)`, although this is not
+  considered a significant difference.
+- the difference between the intercept and Grazing levels 3, 4 and 5 are 
+  `r round(coef(loyn.glm1b)[4],2)`, `r round(coef(loyn.glm1b)[5],2)` and 
+  `r round(coef(loyn.glm1b)[6],2)` respectively (the later of which is considered
+  a significant difference).
+- the four interaction terms compare the partial slopes of Area between Grazing
+  level 1 and each of levels 2, 3, 4 and 5.  Hence the partial slope for Area
+  associated with Grazing level 2 is `r round(coef(loyn.glm1b)[7],2)` units
+  greater (though not significant) than that associated with Grazing level 1.
+- the presence of an interaction effect indicates that we cannot simply conclude
+  that the rate of change (partial slope) associated with Area is a specific
+  value as there is some evidence that the slope is to some degree dependent on
+  Grazing level.
+
+We do know that the partial slope associated with Area for Grazing level 3 is
+different to that associated with Grazing level 1, yet we don't directly know
+what the slope associated with Grazing level 1 is.  Furthermore, we do not know
+how it compares to the slopes associated with other Grazing levels.  We can use
+the 'emtrends()' function to explore this further.
+
+```{r emmtrends, results='markdown', eval=TRUE}
+loyn.glm1b %>% emtrends(pairwise~fGRAZE, var='log(AREA)')
+loyn.glm1b %>% emtrends(pairwise~fGRAZE, var='AREA')
+```
+**Conclusions:**
+
+- the first part of the output displays the partial slopes (for Area) associated
+  with each of the five Grazing levels.  We see that the first of those, is the
+  same partial slope that was reported in the summary from the model itself.
+  -  note that each of the slopes has a value greater than 1 - suggesting
+     positive relationships.  Furthermore, in all but the first partial slope,
+     the confidence intervals suggest significant relationships.
+- the second part of the output displays the differences in partial slopes
+  between each pair of Grazing levels.
+  -  evidently, non of the pairwise slope differences are significant - although
+     it is worth keeping in mind that each individual comparison has sacrificed
+     power.  For example, the summary table indicated that there was inferential
+     evidence of a difference in partial slopes between Grazing level 1 and 3,
+     however when compared in the context of Tukey's contrasts, this is not
+     significant. 
+
+
+```{r emeans, results='markdown', eval=TRUE}
+loyn.glm1b %>% emmeans(pairwise~fGRAZE)
+```
+
+</div>
+
+# Summary figures
+
+<div class='HIDDEN'>
+Since our summary figure will feature both modelled predictors, we might as well
+overlay the trends onto the raw data.
+
+```{r figureModel, results='markdown', eval=TRUE, hidden=TRUE}
+## loyn_grid <- loyn.glm1b %>%
+##     insight::get_data() %>%
+##     modelr::data_grid(AREA=modelr::seq_range(AREA, n=10)) %>%
+##     as.list()
+
+## ref_grid(loyn.glm1b, cov.reduce=function(x) seq_range(x, n=10)) %>%
+##     emmeans(~AREA|fGRAZE)
+
+
+
+## Using emmeans
+loyn.grid <- with(loyn,  list(fGRAZE = levels(fGRAZE),
+                              AREA = seq(min(AREA),  max(AREA),  len=100)))
+## OR
+loyn.grid <- with(loyn,  list(fGRAZE = levels(fGRAZE),
+                            AREA = seq_range(AREA,  n=100)))
+newdata <- loyn.glm1b %>%
+    emmeans(~AREA|fGRAZE,  at=loyn.grid,  type='response') %>%
+  as.data.frame
+head(newdata)
+
+ggplot(newdata, aes(y=response, x=AREA, color=fGRAZE, fill=fGRAZE)) +
+  geom_point(data=loyn,  aes(y=ABUND,  color=fGRAZE)) +
+  ## geom_ribbon(aes(ymin=asymp.LCL, ymax=asymp.UCL), color=NA, alpha=0.3) +
+  geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), color=NA, alpha=0.3) +
+  geom_line() +
+  scale_x_log10(labels=scales::comma)+
+  scale_y_log10('Abundance', breaks=as.vector(c(1,2,5,10) %o% 10^(0:2))) +
+  theme_classic()
+
+```
+
+If we want to limit the range of predictions within each Grazing level...
+
+```{r figureModel3, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.grid <- loyn %>%
+    filter(fGRAZE==1) %>%
+    with(list(fGRAZE='1', AREA=seq_range(AREA,  n=100)))
+newdata.1 = emmeans(loyn.glm1b,  ~AREA|fGRAZE,  at=loyn.grid,  type='response') %>%
+  as.data.frame
+
+loyn.grid <- loyn %>%
+    filter(fGRAZE==2) %>%
+    with(list(fGRAZE='2', AREA=seq_range(AREA,  n=100)))
+newdata.2 = emmeans(loyn.glm1b,  ~AREA|fGRAZE,  at=loyn.grid,  type='response') %>%
+  as.data.frame
+
+loyn.grid <- loyn %>%
+    filter(fGRAZE==3) %>%
+    with(list(fGRAZE='3', AREA=seq_range(AREA,  n=100)))
+newdata.3 = emmeans(loyn.glm1b,  ~AREA|fGRAZE,  at=loyn.grid,  type='response') %>%
+  as.data.frame
+
+loyn.grid <- loyn %>%
+    filter(fGRAZE==4) %>%
+    with(list(fGRAZE='4', AREA=seq_range(AREA,  n=100)))
+newdata.4 = emmeans(loyn.glm1b,  ~AREA|fGRAZE,  at=loyn.grid,  type='response') %>%
+  as.data.frame
+
+loyn.grid <- loyn %>%
+    filter(fGRAZE==5) %>%
+    with(list(fGRAZE='5', AREA=seq_range(AREA,  n=100)))
+newdata.5 = emmeans(loyn.glm1b,  ~AREA|fGRAZE,  at=loyn.grid,  type='response') %>%
+  as.data.frame
+
+newdata.1 %>%
+    bind_rows(newdata.2) %>%
+    bind_rows(newdata.3) %>%
+    bind_rows(newdata.4) %>%
+    bind_rows(newdata.5) %>%
+    ggplot(aes(y=response, x=AREA, color=fGRAZE, fill=fGRAZE)) +
+    geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), color=NA, alpha=0.3) +
+    geom_line() +
+    scale_x_log10(labels=scales::comma)+
+    scale_y_log10('Abundance') +
+  theme_classic() +
+  scale_color_viridis_d() +
+  scale_fill_viridis_d() +
+  geom_point(data=loyn,  aes(y=ABUND,  color=fGRAZE))
+    
+```
+
+```{r figureModel3a, results='markdown', eval=TRUE, hidden=TRUE}
+loyn %>%
+    group_by(fGRAZE) %>%
+    nest() %>%
+    mutate(Grid = map2(.x=data, .y=fGRAZE, ~list(fGRAZE=unique(.y), AREA=seq_range(.x$AREA, n=100))),
+           Pred = map(.x=Grid, ~emmeans(loyn.glm1b, ~AREA|fGRAZE, at=.x, type='response') %>% as.data.frame())
+           ) %>%
+    ungroup() %>%
+    dplyr::select(Pred) %>%
+    unnest(Pred) %>%
+    ggplot(aes(y=response, x=AREA, color=fGRAZE, fill=fGRAZE)) +
+    geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), color=NA, alpha=0.3) +
+    geom_line() +
+    scale_x_log10(labels=scales::comma)+
+    scale_y_log10('Abundance') +
+    theme_classic() +
+    scale_color_viridis_d() +
+    scale_fill_viridis_d() +
+    geom_point(data=loyn,  aes(y=ABUND,  color=fGRAZE))
+
+```
+
+
+```{r figureModel2, results='markdown', eval=TRUE, hidden=TRUE}
+loyn.grid = with(loyn,  list(fGRAZE=levels(fGRAZE),
+                             AREA=as.vector(seq(1, 10, len=10) %o% 10^(-1:3)) %>% unique))
+                             
+
+newdata = emmeans(loyn.glm1b, ~AREA|fGRAZE,
+                  at=loyn.grid,
+                  type='response') %>%
+    as.data.frame
+head(newdata)
+loyn.limits = loyn %>%
+  group_by(fGRAZE) %>%
+  summarise(Min=min(AREA),  Max=max(AREA))
+newdata1 = newdata %>%
+  full_join(loyn.limits) %>%
+  filter(AREA>=Min,  AREA<=Max)
+head(newdata1)
+ggplot(newdata1, aes(y=response, x=AREA, color=fGRAZE, fill=fGRAZE)) +
+    geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), color=NA, alpha=0.3) +
+    geom_line() +
+    scale_x_log10(labels=scales::comma)+
+    scale_y_log10('Abundance') +
+  theme_classic() +
+  scale_color_viridis_d() +
+  scale_fill_viridis_d() +
+  geom_point(data=loyn,  aes(y=ABUND,  color=fGRAZE))
+
+```
+</div>
+
+# References
