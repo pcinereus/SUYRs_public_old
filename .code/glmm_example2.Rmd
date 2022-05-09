@@ -1,0 +1,1273 @@
+---
+title: "GLMM Part2"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../public/resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../public/resources/references.bib
+---
+
+```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+```
+  
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(car)       #for regression diagnostics
+library(broom)     #for tidy output
+library(ggfortify) #for model diagnostics
+library(sjPlot)    #for outputs
+library(knitr)     #for kable
+library(effects)   #for partial effects plots
+library(ggeffects) #for partial effects plots
+library(emmeans)   #for estimating marginal means
+library(MASS)      #for glm.nb
+library(MuMIn)     #for AICc
+library(tidyverse) #for data wrangling
+library(nlme)
+library(lme4)
+library(glmmTMB)
+library(broom.mixed)
+library(glmmTMB)   #for glmmTMB
+library(DHARMa)   #for residuals and diagnostics
+library(performance) #for diagnostic plots
+library(see)         #for diagnostic plots
+library(patchwork)  #for multiplot layouts
+```
+
+# Scenario
+
+To investigate differential metabolic plasticity in barramundi (*Lates
+calcarifer*), @Norin-2016-369 exposed juvenile barramundi to various
+environmental changes (increased temperature, decreased salinity and increased
+hypoxia) as well as control conditions.  Metabolic plasticity was calculated as
+the percentage difference in standard metabolic rate between the various
+treatment conditions and the standard metabolic rate under control conditions.
+They were interested in whether there was a relationship between metabolic
+plasticity and typical (control) metabolism and how the different treatment
+conditions impact on this relationship.
+
+A total of 60 barramundi juveniles were subject to each of the three conditions
+(high temperature, low salinity and hypoxia) in addition to control conditions.
+Fish mass was also recorded as a covariate as this is known to influence
+metabolic parameters.
+
+![Barramundi](../public/resources/barramundi.png){width="310"}
+
+![Sampling design](../public/resources/ws9.3aQ3.diag.png)
+
+Format of norin.csv data files
+
+FISHID   MASS    TRIAL             SMR\_contr   CHANGE
+-------- ------- ----------------- ------------ --------
+1        35.69   LowSalinity       5.85         -31.92
+2        33.84   LowSalinity       6.53         2.52
+3        37.78   LowSalinity       5.66         -6.28
+..       ..      ..                ..           ..
+1        36.80   HighTemperature   5.85         18.32
+2        34.98   HighTemperature   6.53         19.06
+3        38.38   HighTemperature   5.66         19.03
+..       ..      ..                ..           ..
+1        45.06   Hypoxia           5.85         -18.61
+2        43.51   Hypoxia           6.53         -5.37
+3        45.11   Hypoxia           5.66         -13.95
+
+
+
+---------------- ------------------------------------------------------------------------------------------------------------------------------------------------------
+**FISHID**       Categorical listing of the individual fish that are repeatedly sampled
+**MASS**         Mass (g) of barramundi. Covariate in analysis
+**TRIAL**        Categorical listing of the trial (LowSalinity: 10ppt salinity; HighTemperature: 35 degrees; Hypoxia: 45% air-sat. oxygen.
+**SMR\_contr**   Standard metabolic rate (mg/h/39.4 g of fish) under control trial conditions (35 ppt salinity, 29 degrees, normoxia)
+**CHANGE**       Percentage difference in Standard metabolic rate (mg/h/39.4 g of fish) between Trial conditions and control adjusted for \'regression to the mean\'.
+---------------- ------------------------------------------------------------------------------------------------------------------------------------------------------
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+norin = read_csv('../public/data/norin.csv', trim_ws=TRUE)
+glimpse(norin)
+```
+
+<div class = 'HIDDEN'>
+
+Since the response variable is a difference between the SMR under control
+conditions compared to the specific trial conditions (either Low salinity, High
+temperature or Hypoxia), the only possible distribution we can use is a
+Gaussian.  Well to clarify this, we could use a t-distribution, but this is not
+really available for frequentist mixed effects routines in R.
+
+</div>
+
+# Exploratory data analysis
+
+Model formula:
+$$
+y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
+\mu_i =\boldsymbol{\beta} \bf{X_i} + \boldsymbol{\gamma} \bf{Z_i}
+$$
+
+where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of the fixed
+and random effects parameters respectively and $\bf{X}$ is the model matrix
+representing the overall intercept and effects of temperature and (centred)
+mean fish size on SDA peak.  $\bf{Z}$ represents a cell means model matrix for
+the random intercepts associated with individual fish.
+
+<div class='HIDDEN'>
+
+Lets begin by declaring the categorical predictors and random effects as
+factors.
+
+```{r eda1, results='markdown', eval=TRUE, hidden=TRUE}
+norin = norin %>% mutate(FISHID=factor(FISHID),
+                         TRIAL=factor(TRIAL))
+```
+
+Each of the fish were exposed to each of the three trials (treatments). So lets
+explore the distributions of responses within each of these trials.
+
+```{r eda2, results='markdown', eval=TRUE, hidden=TRUE}
+ggplot(norin, aes(y=CHANGE, x=TRIAL)) + geom_boxplot()
+```
+
+**Conclusions:**
+
+- these seem reasonable enough
+
+The researchers considered that physiological plasticity might be effected by
+the fishes basal metabolic rate.  For example, a fish with relatively high
+metabolism might have less scope to increase this metabolism than a fish with
+a lower metabolism.  Therefore, the SMR under control conditions (just prior to
+the specific trial) could be added as a continuous covariate.
+
+Doing so would introduce two additional assumptions:
+
+1. linearity: that the relationship between the response and control SMR is
+   linear (if we intend to model it as a linear trend)
+2. homogeneity of slopes: that the rate of change in response associated with a
+   one unit change in control SMR is similar for each trial (unless we include
+   an interaction)
+   
+```{r eda3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4}
+ggplot(norin, aes(y=CHANGE, x=SMR_contr, shape=TRIAL, color=TRIAL)) +
+    geom_smooth(method='lm') + geom_point()
+ggplot(norin, aes(y=CHANGE, x=SMR_contr, shape=TRIAL, color=TRIAL)) +
+  geom_smooth() + geom_point()
+```
+
+It might also be worth exploring how consistent the trial effect is across the
+different fish.  This can give us an idea of whether the addition of a random
+intercept/slope model would be useful.
+
+```{r eda4, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4}
+ggplot(norin, aes(y=CHANGE, x=as.numeric(FISHID), color=TRIAL)) +
+    geom_point() + geom_line()
+```
+
+**Conclusions:**
+
+- generally, the difference between control and trial SMR is greatest for the
+  High temperature trial.
+- there is less consistency about the relative effects of Hypoxia and Low
+  Salinity.
+- hence a random intercept/slope model might be useful.
+
+Finally, as an acknowledgement that the metabolic response might be influenced
+
+by the mass of the fish, the researchers contemplated including fish Mass as a
+continuous covariate.  There are numerous alternative ways to incorporate
+covariates that are known to impact on a response.
+
+- add them as an offset.  This will include the covariate in the model, yet will
+  not estimate a partial slope for this predictor.  Rather the slope is assumed
+  to be 1.  Since the parameter does not need to be estimated, adding a
+  predictor as an offset does not consume any degrees of freedom.  However, it
+  does assume that there is a slope of one.   This approach can be useful as an
+  alternative to using the response divided by the covariate as the response.
+  That is, it is equivalent to using a response that has been standardised by
+  the covariate, yet still allowing the modelling distribution that would be
+  appropriate for the original response.
+- add them as a regular covariate.  This will include the covariate in the model
+  and estimate a partial slope parameter just like any other term.  Although it
+  will incur a degrees of freedom penalty, it does not assume a slope of 1 and
+  could be modelled as non-linear if appropriate.
+
+Lets explore the relationship between the response and Mass separately for each
+Trial.
+
+```{r eda5, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4}
+ggplot(norin, aes(y=CHANGE, x=MASS, color=TRIAL)) +
+  geom_point() +
+  geom_smooth(method='lm')
+```
+
+**Conclusions:**
+
+- there does not seem to be much of a relationship between the response and
+Mass. Nevertheless, in the presence of control SMN, it might still be a useful
+covariate at explaining some of the unexplained variability (and thus increasing
+the power of the model).
+- there is no evidence that the response and Mass are related in a non-linear
+  manner.
+  
+
+</div>
+
+# Fit the model {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+For each of the following modelling alternatives, we will:
+
+- establish whether a random intercept/slope model is useful (based on AICc).
+  This step involves evaluating alternative random effects structures.  When
+  doing so, we should use Restricted Maximum Likelihood (REML)
+- establish whether MASS is a useful covariate (based on AICc).  This step
+  involves evaluating alternative fixed effects structures.  When doing so, we
+  must use Maximum Likelihood (ML) rather than Residual Maximum Likelihood (REML).
+
+## lme (nlme) {.tabset .tabset-faded}
+
+### random structures
+
+```{r fitModel1b, results='markdown', eval=TRUE, hidden=TRUE}
+## Start with random intercept model
+norin.lme1 <- lme(CHANGE ~ 1 + offset(MASS),
+                  random = ~1|FISHID,
+                  data=norin,
+                  method='REML')
+## Then random intercept and slope model
+norin.lme2 <- lme(CHANGE ~ 1 + offset(MASS),
+                  random = ~TRIAL|FISHID,
+                  data=norin,
+                  method='REML')
+AICc(norin.lme1, norin.lme2)
+anova(norin.lme1, norin.lme2)
+```
+
+**Conclusions:**
+
+- the AICc of the random intercept/slope model is lowest
+- therefore we will proceed with a random intercept/slope model
+
+### fixed structures
+
+```{r fitModel1a, results='markdown', eval=TRUE, hidden=TRUE}
+##Compare models that estimate partial slope for MASS vs an offset for MASS
+##must use ML to compare models that vary in fixed effects
+norin.lme2a <- update(norin.lme2,
+                      .~TRIAL*scale(SMR_contr, scale=FALSE) + offset(MASS),
+                      method = 'ML')
+## The following does not converge
+## norin.lme2b <- update(norin.lme2,
+##                       .~TRIAL*scale(SMR_contr, scale=FALSE) + MASS,
+##                       method = 'ML')
+## Use BFGS from optim instead
+norin.lme2b <- update(norin.lme2,
+                      .~TRIAL*scale(SMR_contr, scale=FALSE) + MASS,
+                      method = 'ML',
+                      control = lmeControl(opt = "optim",
+                                           optimMethod = "BFGS"))
+norin.lme2c <- update(norin.lme2,
+                      .~TRIAL*scale(SMR_contr, scale=FALSE),
+                      method = 'ML')
+
+AICc(norin.lme2a, norin.lme2b, norin.lme2c)
+anova(norin.lme2a, norin.lme2b, norin.lme2c)
+## Now that we have decided on the structure, we need to ensure that the
+## model has been fit with REML
+norin.lme2c <- update(norin.lme2c, method='REML')
+```
+
+**Conclusions:**
+
+- on the basis of AICc, the model without MASS is considered the most
+  parsimonious (lowest AICc)
+- we will proceed with the fixed structure of model 2c
+
+## lmer (lme4) {.tabset .tabset-pills}
+
+### random structure
+
+```{r fitModel2b, results='markdown', eval=TRUE, hidden=TRUE}
+## Start with random intercept model
+norin.lmer1 <- lmer(CHANGE ~ 1 + offset(MASS) + (1|FISHID),
+                    data = norin,
+                    REML = TRUE)
+## Then random intercept and slope model
+norin.lmer2 <- lmer(CHANGE ~ 1 + offset(MASS) + (TRIAL|FISHID),
+                    data = norin,
+                    REML = TRUE,
+                    control = lmerControl(check.nobs.vs.nRE = 'ignore'))
+AICc(norin.lmer1,  norin.lmer2)
+anova(norin.lmer1, norin.lmer2)
+```
+
+**Conclusions:**
+
+- the AICc of the random intercept/slope model is lowest
+- therefore we will proceed with a random intercept/slope model
+
+### fixed structure
+
+```{r fitModel2a, results='markdown', eval=TRUE, hidden=TRUE}
+##Compare models that estimate partial slope for MASS vs an offset for MASS
+##must use ML to compare models that vary in fixed effects
+norin.lmer2a <- update(norin.lmer2,
+                       .~TRIAL*scale(SMR_contr, scale = FALSE) + offset(MASS)
+                       + (TRIAL|FISHID),
+                       data = norin,
+                       REML = FALSE)
+norin.lmer2b <- update(norin.lmer2,
+                       .~TRIAL*scale(SMR_contr, scale = FALSE) + MASS
+                       + (TRIAL|FISHID),
+                       data = norin,
+                       REML = FALSE)
+norin.lmer2c <- update(norin.lmer2,
+                       .~TRIAL*scale(SMR_contr, scale = FALSE)
+                       + (TRIAL|FISHID),
+                       data = norin,
+                       REML = FALSE)
+## Compare these models via AICc
+AICc(norin.lmer2a, norin.lmer2b, norin.lmer2c)
+## Alternatively,  we can use sequential Likelihood Ratio Tests (LRT)
+anova(norin.lmer2a, norin.lmer2b, norin.lmer2c)
+## Now that we have decided on the structure, we need to ensure that the
+## model has been fit with REML
+norin.lmer2c <- update(norin.lmer2c, REML=TRUE)
+```
+
+**Conclusions:**
+
+- on the basis of AICc, the model without MASS is considered the most
+  parsimonious (lowest AICc)
+- we will proceed with the fixed structure of model 2c
+
+## glmmTMB {.tabset .tabset-pills}
+
+### random structure
+
+```{r fitModel3b, results='markdown', eval=TRUE, hidden=TRUE}
+## Start with random intercept model
+norin.glmmTMB1 <- glmmTMB(CHANGE ~ 1 + offset(MASS) + (1|FISHID),
+                          data = norin,
+                          REML = TRUE)
+## Then random intercept and slope model
+norin.glmmTMB2 <- glmmTMB(CHANGE ~ 1 + offset(MASS) + (TRIAL|FISHID),
+                          data = norin,
+                          REML = TRUE)
+## norin.glmmTMB2 <- glmmTMB(CHANGE ~ 1 + offset(MASS) + (TRIAL|FISHID),
+##                           data = as.data.frame(norin),
+##                           REML = TRUE,
+##                           control=glmmTMBControl(optimizer=optim,
+##                                                  optArgs=list(method='BFGS')
+##                                                  )
+##                           )
+norin.glmmTMB2 <- glmmTMB(CHANGE ~ 1 + offset(scale(MASS, scale=FALSE)) + (TRIAL|FISHID),
+                          data = norin,
+                          REML = TRUE)
+AICc(norin.glmmTMB1, norin.glmmTMB2)
+anova(norin.glmmTMB1, norin.glmmTMB2)
+```
+
+**Conclusions:**
+
+- the AICc of the random intercept/slope model is lowest
+- therefore we will proceed with a random intercept/slope model
+
+### fixed structure
+
+```{r fitModel3a, results='markdown', eval=TRUE, hidden=TRUE}
+##Compare models that estimate partial slope for MASS vs an offset for MASS
+norin.glmmTMB2a <- glmmTMB(CHANGE~TRIAL*scale(SMR_contr, scale=FALSE) +
+                               offset(MASS) +
+                               (TRIAL|FISHID),
+                           data = norin, 
+                           REML=FALSE)
+## OR with update
+norin.glmmTMB2a <- update(norin.glmmTMB2,
+                          .~TRIAL*scale(SMR_contr, scale=FALSE) +
+                              offset(scale(MASS, scale=FALSE)) +
+                              (TRIAL|FISHID),
+                          REML=FALSE)
+## now with MASS as a partial slope
+norin.glmmTMB2b <- glmmTMB(CHANGE~TRIAL*scale(SMR_contr, scale=FALSE) +
+                               scale(MASS, scale=FALSE) +
+                               (TRIAL|FISHID),
+                           data = norin, 
+                           REML=FALSE)
+## OR with update
+norin.glmmTMB2b <- update(norin.glmmTMB2,
+                          .~TRIAL*scale(SMR_contr, scale=FALSE) +
+                              scale(MASS, scale=FALSE) +
+                              (TRIAL|FISHID),
+                         REML=FALSE)
+## Finally without MASS
+norin.glmmTMB2c <- glmmTMB(CHANGE~
+                               TRIAL*scale(SMR_contr, scale=FALSE) +
+                               (TRIAL|FISHID),
+                           data = norin, 
+                           REML=FALSE)
+## I have explored a range of alternative optimizers etc and
+## none of them resolve the issue.
+## The current model will be good enough to explore AICc and it turns out that the model
+## converges fine once we run with REML
+
+## Note the following does resolve it (not sure why), yet causes downstream issues
+## norin.glmmTMB2c <- glmmTMB(CHANGE~
+##                                TRIAL*scale(SMR_contr, scale=FALSE) +
+##                               (TRIAL|FISHID),
+##                           data = norin, 
+##                           control=glmmTMBControl(profile=TRUE),
+##                          REML=FALSE)
+## ## OR with update
+## norin.glmmTMB2c <- update(norin.glmmTMB2,
+##                           .~TRIAL*scale(SMR_contr, scale=FALSE) +
+##                               (TRIAL|FISHID),
+##                           control=glmmTMBControl(profile=TRUE),
+##                          REML=FALSE)
+## Compare these models via AICc
+AICc(norin.glmmTMB2a, norin.glmmTMB2b, norin.glmmTMB2c)
+## Now that we have decided on the structure, we need to ensure that the
+## model has been fit with REML
+## It turns out that when the model withough MASS is run using REML, the
+## response type residuals are tiny - not sure why.
+## We will instead go with the offset(MASS) model (2a)
+norin.glmmTMB2c <- update(norin.glmmTMB2a, REML=TRUE)
+```
+
+**Conclusions:**
+
+- on the basis of AICc, the model without MASS is considered the most
+  parsimonious (lowest AICc)
+- we will proceed with the fixed structure of model 2c
+
+</div>
+
+# Model validation {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## lme (nlme) {.tabset .tabset-pills}
+
+**Conclusions:**
+
+- whilst the residual plot is OK, the Q-Q plot deviates substantially from a
+  straight line.  This suggests that there is more mass in the tails of the
+  distribution than a Gaussian would expect.  Although the model is reasonably
+  robust to this, it would be nice to have the option to model these data
+  against a flatter distribution such as a Student t.  Unfortunately, this is
+  not available. 
+
+### plot_model
+
+```{r modelValidation1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7}
+plot_model(norin.lme2c, type='diag')[-2] %>% plot_grid()
+```
+
+**Conclusions:**
+
+- whilst the residual plot is OK, the Q-Q plot deviates substantially from a
+  straight line.  This suggests that there is more mass in the tails of the
+  distribution than a Gaussian would expect.  Although the model is reasonably
+  robust to this, it would be nice to have the option to model these data
+  against a flatter distribution such as a Student t.  Unfortunately, this is
+  not available. 
+
+### Performance model checking
+
+```{r modelValidation1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7}
+norin.lme2c %>% performance::check_model()
+```
+
+### DHARMa residuals
+
+Unfortunately, this did not work...
+
+```{r modelValidation1c, results='markdown', eval=TRUE, hidden=TRUE}
+## norin.resid = simulateResiduals(norin.lme2c,  plot=TRUE)
+```
+
+## lmer (lme4) {.tabset .tabset-pills}
+
+### plot_model
+
+```{r modelValidation2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7}
+plot_model(norin.lmer2c, type='diag')[-2] %>% plot_grid()
+```
+
+**Conclusions:**
+
+- whilst the residual plot is OK, the Q-Q plot deviates substantially from a
+  straight line.  This suggests that there is more mass in the tails of the
+  distribution than a Gaussian would expect.  Although the model is reasonably
+  robust to this, it would be nice to have the option to model these data
+  against a flatter distribution such as a Student t.  Unfortunately, this is
+  not available. 
+
+### Performance model checking
+
+```{r modelValidation2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7}
+norin.lmer2c %>% performance::check_model()
+```
+
+**Conclusions:**
+
+- whilst the residual plot is OK, the Q-Q plot deviates substantially from a
+  straight line.  This suggests that there is more mass in the tails of the
+  distribution than a Gaussian would expect.  Although the model is reasonably
+  robust to this, it would be nice to have the option to model these data
+  against a flatter distribution such as a Student t.  Unfortunately, this is
+  not available. 
+
+### DHARMa residuals
+
+```{r modelValidation2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7}
+norin.resid <- norin.lmer2c %>% simulateResiduals(plot=TRUE)
+```
+
+**Conclusions:**
+
+- in contrast to the regular Q-Q normal plots, the Q-Q normal plots generated
+  from the simulated residuals look fine.
+- the residual plot from the simulated residuals look fine
+- the diagnostic tests reveal no issues.
+
+## glmmTBM (glmmTMB) {.tabset .tabset-pills}
+
+### plot_model
+
+```{r modelValidation3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7}
+plot_model(norin.glmmTMB2c, type='diag')[-2] %>% plot_grid()
+```
+
+**Conclusions:**
+
+- whilst the residual plot is OK, the Q-Q plot deviates substantially from a
+  straight line.  This suggests that there is more mass in the tails of the
+  distribution than a Gaussian would expect.  Although the model is reasonably
+  robust to this, it would be nice to have the option to model these data
+  against a flatter distribution such as a Student t.  Unfortunately, this is
+  not available. 
+
+### Performance model checking
+
+```{r modelValidation3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7}
+norin.glmmTMB2c %>% performance::check_model()
+```
+
+**Conclusions:**
+
+- whilst the residual plot is OK, the Q-Q plot deviates substantially from a
+  straight line.  This suggests that there is more mass in the tails of the
+  distribution than a Gaussian would expect.  Although the model is reasonably
+  robust to this, it would be nice to have the option to model these data
+  against a flatter distribution such as a Student t.  Unfortunately, this is
+  not available. 
+
+### DHARMa residuals
+
+```{r modelValidation3c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7}
+norin.resid <- norin.glmmTMB2c %>% simulateResiduals(plot=TRUE)
+```
+
+**Conclusions:**
+
+- in contrast to the regular Q-Q normal plots, the Q-Q normal plots generated
+  from the simulated residuals look fine.
+- the residual plot from the simulated residuals look fine
+- the diagnostic tests reveal no issues.
+
+</div>
+
+
+# Partial plots model {.tabset .tabset-faded}
+
+<div class = 'HIDDEN'>
+
+## lme (nlme) {.tabset .tabset-pills}
+
+### plot_model
+
+```{r partialPlots1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.lme2c %>% plot_model(type='eff',  terms=c('SMR_contr', 'TRIAL'),  show.data=TRUE)
+```
+
+We can also explore the fixed effects (as a caterpillar plot).
+
+```{r partialPlots1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.lme2c %>% plot_model(type='est')
+```
+
+And similarly, the individual random effects (intercepts of each fish).
+
+```{r partialPlots1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+#plot_model(norin.lme3a,  type='re')
+```
+
+### allEffects
+
+```{r partialPlots1d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.lme2c %>% allEffects() %>% plot(multiline=TRUE,  ci.style='bands')
+## Unfortunately, the use of scale() seems to prevent partial.residuals being calculated
+## norin.lme2c %>% allEffects() %>% plot(multiline=TRUE,  ci.style='bands', partial.residuals=TRUE)
+```
+
+### ggpredict
+
+```{r partialPlots1e, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.lme2c %>% ggpredict(c('SMR_contr', 'TRIAL')) %>% plot(add.data=TRUE)
+```
+
+### ggemmeans
+
+```{r partialPlots1f, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.lme2c %>% ggemmeans(~SMR_contr*TRIAL) %>% plot(add.data=TRUE)
+```
+
+## lmer (lmer) {.tabset .tabset-pills}
+
+### plot_model
+
+```{r partialPlots2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.lmer2c %>% plot_model(type='eff',  show.data=TRUE) %>% plot_grid()
+norin.lmer2c %>% plot_model(type='eff',  terms=c('SMR_contr', 'TRIAL'),  show.data=TRUE)
+```
+
+We can also explore the fixed effects (as a caterpillar plot).
+
+```{r partialPlots2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.lmer2c %>% plot_model(type='est')
+```
+
+And similarly, the individual random effects (intercepts of each fish).
+
+```{r partialPlots2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.lmer2c %>% plot_model(type='re')
+```
+
+### allEffects
+
+```{r partialPlots2d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.lmer2c %>% allEffects() %>% plot(multiline=TRUE,  ci.style='bands')
+```
+
+### ggpredict
+
+```{r partialPlots2e, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.lmer2c %>% ggpredict(c('SMR_contr', 'TRIAL')) %>% plot(add.data=TRUE)
+```
+
+### ggemmeans
+
+```{r partialPlots2f, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.lmer2c %>% ggemmeans(~SMR_contr*TRIAL) %>% plot(add.data=TRUE)
+```
+
+## glmmTMB (glmmTMB) {.tabset .tabset-pills}
+
+### plot_model
+
+```{r partialPlots3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.glmmTMB2c %>% plot_model(type='eff',  show.data=TRUE) %>% plot_grid()
+norin.glmmTMB2c %>%
+    plot_model(type='eff',  terms=c('SMR_contr', 'TRIAL'), show.data=TRUE)
+```
+
+We can also explore the fixed effects (as a caterpillar plot).
+
+```{r partialPlots3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.glmmTMB2c %>% plot_model(type='est')
+```
+
+And similarly, the individual random effects (intercepts of each fish).
+
+```{r partialPlots3c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.glmmTMB2c %>% plot_model(type='re')
+```
+
+### allEffects
+
+```{r partialPlots3d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.glmmTMB2c %>%allEffects() %>% plot(multiline=TRUE,  ci.style='bands')
+```
+
+### ggpredict
+
+```{r partialPlots3e, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.glmmTMB2c %>% ggpredict(c('SMR_contr', 'TRIAL')) %>% plot(add.data=TRUE)
+```
+
+### ggemmeans
+
+```{r partialPlots3f, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+norin.glmmTMB2c %>% ggemmeans(~SMR_contr*TRIAL) %>% plot(add.data=TRUE)
+```
+
+</div>
+
+# Model investigation / hypothesis testing {.tabset .tabset-faded}
+
+<div class = 'HIDDEN'>
+
+## lme (nlme) {.tabset .tabset-pills}
+
+### summary
+
+```{r summarizeModel1a, results='markdown', eval=TRUE, hidden=TRUE}
+norin.lme2c %>% summary()
+```
+
+**Conclusions:**
+
+- the average change in SMR for the High Temperature trial at the average
+  control SMR is `r round(fixef(norin.lme2c)[1], 2)`.
+- on average, the change in SMR during Hypoxia is 
+  `r -1*round(fixef(norin.lme2c)[2], 2)` less at the average control SMR than
+  during the High Temperature trial.
+- on average, the change in SMR during Low Salinity is 
+  `r -1*round(fixef(norin.lme2c)[3], 2)` less at the average control SMR than
+  during the High Temperature trial.
+- during the High Temperature trial, for every one unit change in control SMR,
+  the change in SMR declined by `r -1*round(fixef(norin.lme2c)[4], 2)`
+- the rate of change in SMR during the Hypoxia trial was 
+  `r round(fixef(norin.lme2c)[5], 2)` more than that associated with High Temperature.
+- the rate of change in SMR during the Low Salinity trial was 
+  `r round(fixef(norin.lme2c)[6], 2)` more than that associated with High
+  Temperature (although this was not found to be significant).
+- there is approximately twice as much variation within Fish (replicate level)
+  as there is between Fish (`r as.numeric(round(tidy(norin.lme2c)[13, 4], 2))` vs  
+  `r as.numeric(round(tidy(norin.lme2c)[7, 4], 2))`).
+
+### confint
+
+```{r summarizeModel1b, results='markdown', eval=TRUE, hidden=TRUE}
+norin.lme2c %>% intervals()
+```
+
+### tidy
+
+```{r summarizeModel1c, results='markdown', eval=TRUE, hidden=TRUE}
+norin.lme2c %>% tidy(conf.int=TRUE)
+norin.lme2c %>% tidy(conf.int=TRUE) %>% kable
+```
+
+**Conclusions:**
+
+- the average change in SMR for the High Temperature trial at the average
+  control SMR is `r round(fixef(norin.lme2c)[1], 2)`.
+- on average, the change in SMR during Hypoxia is 
+  `r -1*round(fixef(norin.lme2c)[2], 2)` less at the average control SMR than
+  during the High Temperature trial.
+- on average, the change in SMR during Low Salinity is 
+  `r -1*round(fixef(norin.lme2c)[3], 2)` less at the average control SMR than
+  during the High Temperature trial.
+- during the High Temperature trial, for every one unit change in control SMR,
+  the change in SMR declined by `r -1*round(fixef(norin.lme2c)[4], 2)`
+- the rate of change in SMR during the Hypoxia trial was 
+  `r round(fixef(norin.lme2c)[5], 2)` more than that associated with High Temperature.
+- the rate of change in SMR during the Low Salinity trial was 
+  `r round(fixef(norin.lme2c)[6], 2)` more than that associated with High
+  Temperature (although this was not found to be significant).
+- there is approximately twice as much variation within Fish (replicate level)
+  as there is between Fish (`r as.numeric(round(tidy(norin.lme2c)[13, 4], 2))` vs  
+  `r as.numeric(round(tidy(norin.lme2c)[7, 4], 2))`).
+
+### tab_model
+
+```{r summarizeModel1d, results='markdown', eval=TRUE, hidden=TRUE}
+# warning this is only appropriate for html output
+norin.lme2c %>% sjPlot::tab_model(show.se=TRUE, show.aic=TRUE)
+```
+
+## lmer (lme4) {.tabset .tabset-pills}
+
+### summary
+
+```{r summarizeModel2a, results='markdown', eval=TRUE, hidden=TRUE}
+norin.lmer2c %>% summary()
+```
+
+**Conclusions:**
+
+- the average change in SMR for the High Temperature trial at the average
+  control SMR is `r round(fixef(norin.lmer2c)[1], 2)`.
+- on average, the change in SMR during Hypoxia is 
+  `r -1*round(fixef(norin.lmer2c)[2], 2)` less at the average control SMR than
+  during the High Temperature trial.
+- on average, the change in SMR during Low Salinity is 
+  `r -1*round(fixef(norin.lmer2c)[3], 2)` less at the average control SMR than
+  during the High Temperature trial.
+- during the High Temperature trial, for every one unit change in control SMR,
+  the change in SMR declined by `r -1*round(fixef(norin.lmer2c)[4], 2)`
+- the rate of change in SMR during the Hypoxia trial was 
+  `r round(fixef(norin.lmer2c)[5], 2)` more than that associated with High Temperature.
+- the rate of change in SMR during the Low Salinity trial was 
+  `r round(fixef(norin.lmer2c)[6], 2)` more than that associated with High
+  Temperature (although this was not found to be significant).
+- there is approximately twice as much variation within Fish (replicate level)
+  as there is between Fish (`r as.numeric(round(tidy(norin.lmer2c)[13, 4], 2))` vs  
+  `r as.numeric(round(tidy(norin.lmer2c)[7, 4], 2))`).
+
+### confint
+
+```{r summarizeModel2b, results='markdown', eval=TRUE, hidden=TRUE}
+norin.lmer2c %>% confint()
+```
+
+### tidy
+
+```{r summarizeModel2c, results='markdown', eval=TRUE, hidden=TRUE}
+norin.lmer2c %>% tidy(conf.int=TRUE)
+norin.lmer2c %>% tidy(conf.int=TRUE) %>% kable
+```
+
+**Conclusions:**
+
+- the average change in SMR for the High Temperature trial at the average
+  control SMR is `r round(fixef(norin.lmer2c)[1], 2)`.
+- on average, the change in SMR during Hypoxia is 
+  `r -1*round(fixef(norin.lmer2c)[2], 2)` less at the average control SMR than
+  during the High Temperature trial.
+- on average, the change in SMR during Low Salinity is 
+  `r -1*round(fixef(norin.lmer2c)[3], 2)` less at the average control SMR than
+  during the High Temperature trial.
+- during the High Temperature trial, for every one unit change in control SMR,
+  the change in SMR declined by `r -1*round(fixef(norin.lmer2c)[4], 2)`
+- the rate of change in SMR during the Hypoxia trial was 
+  `r round(fixef(norin.lmer2c)[5], 2)` more than that associated with High Temperature.
+- the rate of change in SMR during the Low Salinity trial was 
+  `r round(fixef(norin.lmer2c)[6], 2)` more than that associated with High
+  Temperature (although this was not found to be significant).
+- there is approximately twice as much variation within Fish (replicate level)
+  as there is between Fish (`r as.numeric(round(tidy(norin.lmer2c)[13, 4], 2))` vs  
+  `r as.numeric(round(tidy(norin.lmer2c)[7, 4], 2))`).
+
+### tab_model
+
+```{r summarizeModel2d, results='markdown', eval=TRUE, hidden=TRUE}
+# warning this is only appropriate for html output
+norin.lmer2c %>% sjPlot::tab_model(show.se=TRUE, show.aic=TRUE)
+```
+
+## glmmTMB (glmmTMB) {.tabset .tabset-pills}
+
+### summary
+
+```{r summarizeModel3a, results='markdown', eval=TRUE, hidden=TRUE}
+norin.glmmTMB2c %>% summary()
+cov2cor(vcov(norin.glmmTMB2c)$cond)
+norin.glmmTMB2c %>% vcov() %>% `[[`('cond') %>% cov2cor() %>% round(3)
+```
+
+**Conclusions:**
+
+- the average change in SMR for the High Temperature trial at the average
+  control SMR is `r round(fixef(norin.glmmTMB2c)[[1]][1], 2)`.
+- on average, the change in SMR during Hypoxia is 
+  `r -1*round(fixef(norin.glmmTMB2c)[[1]][2], 2)` less at the average control SMR than
+  during the High Temperature trial.
+- on average, the change in SMR during Low Salinity is 
+  `r -1*round(fixef(norin.glmmTMB2c)[[1]][3], 2)` less at the average control SMR than
+  during the High Temperature trial.
+- during the High Temperature trial, for every one unit change in control SMR,
+  the change in SMR declined by `r -1*round(fixef(norin.glmmTMB2c)[[1]][4], 2)`
+- the rate of change in SMR during the Hypoxia trial was 
+  `r round(fixef(norin.glmmTMB2c)[[1]][5], 2)` more than that associated with High Temperature.
+- the rate of change in SMR during the Low Salinity trial was 
+  `r round(fixef(norin.glmmTMB2c)[[1]][6], 2)` more than that associated with High
+  Temperature (although this was not found to be significant).
+ - there is approximately twice as much variation within Fish (replicate level)
+  as there is between Fish (`r as.numeric(round(tidy(norin.glmmTMB2c)[13, 5], 2))` vs  
+  `r as.numeric(round(tidy(norin.glmmTMB2c)[7, 5], 2))`).
+  
+### confint
+
+```{r summarizeModel3b, results='markdown', eval=TRUE, hidden=TRUE}
+norin.glmmTMB2c %>% confint()
+```
+
+### tidy
+
+```{r summarizeModel3c, results='markdown', eval=TRUE, hidden=TRUE}
+norin.glmmTMB2c %>% tidy()
+## There seems to be a bug, doesn't work with random effects here
+norin.glmmTMB2c %>% tidy(effects='fixed', conf.int=TRUE)
+norin.glmmTMB2c %>% tidy(effects='fixed', conf.int=TRUE) %>% kable
+```
+
+**Conclusions:**
+
+- the average change in SMR for the High Temperature trial at the average
+  control SMR is `r round(fixef(norin.glmmTMB2c)[[1]][1], 2)`.
+- on average, the change in SMR during Hypoxia is 
+  `r -1*round(fixef(norin.glmmTMB2c)[[1]][2], 2)` less at the average control SMR than
+  during the High Temperature trial.
+- on average, the change in SMR during Low Salinity is 
+  `r -1*round(fixef(norin.glmmTMB2c)[[1]][3], 2)` less at the average control SMR than
+  during the High Temperature trial.
+- during the High Temperature trial, for every one unit change in control SMR,
+  the change in SMR declined by `r -1*round(fixef(norin.glmmTMB2c)[[1]][4], 2)`
+- the rate of change in SMR during the Hypoxia trial was 
+  `r round(fixef(norin.glmmTMB2c)[[1]][5], 2)` more than that associated with High Temperature.
+- the rate of change in SMR during the Low Salinity trial was 
+  `r round(fixef(norin.glmmTMB2c)[[1]][6], 2)` more than that associated with High
+  Temperature (although this was not found to be significant).
+ - there is approximately twice as much variation within Fish (replicate level)
+  as there is between Fish (`r as.numeric(round(tidy(norin.glmmTMB2c)[13, 5], 2))` vs  
+  `r as.numeric(round(tidy(norin.glmmTMB2c)[7, 5], 2))`).
+  
+### tab_model
+
+```{r summarizeModel3d, results='markdown', eval=TRUE, hidden=TRUE}
+# warning this is only appropriate for html output
+norin.glmmTMB2c %>% sjPlot::tab_model(show.se=TRUE, show.aic=TRUE)
+```
+
+</div>
+
+
+# Predictions / further analyses {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+The presence of a significant interaction suggests that the nature of the
+relationship between SMR change and the control SMR differs between the three
+trials (High Temperature, Hypoxia and Low Salinity).  Equivalently, the
+differences between the three trials is not constant over all levels of control
+SMR.
+
+To further tease these interactions apart, we could either:
+
+- compare the slopes separately for each of the three trials
+- compare the effects of the three trials at multiple values of control SMR
+
+We will now explore each of the above, although typically we would only do one
+or the other (depending on which variable was of more interest).
+
+## lme (nlme) {.tabset .tabset-pills}
+
+### Compare slopes
+
+```{r posteriors1a, results='markdown', eval=TRUE, echo=1,hidden=TRUE}
+norin.lme2c %>% emtrends(~TRIAL, var='SMR_contr') %>% pairs()
+norin.emt <- norin.lme2c %>% emtrends(~TRIAL, var='SMR_contr') %>% pairs() %>% as.data.frame
+```
+
+**Conclusions:**
+
+- the partial slope associated with control SMR during High Temperature was
+found to be `r -1*round(norin.emt[1, 2], 2)` units more negative than during
+Hypoxia (although not significant).  Note, we already had this partial slope in
+the original summary table.
+- the partial slope associated with control SMR during High Temperature was
+found to be `r -1*round(norin.emt[2, 2], 2)` units more negative than during
+Low Salinity (although not significant).  Note, we already had this partial slope in
+the original summary table.
+- the partial slope associated with control SMR during Hypoxia was
+found to be `r round(norin.emt[3, 2], 2)` units less negative than during
+Low Salinity (although not significant).  Note, we already had this partial slope in
+the original summary table.
+
+### Compare Trials (at different values of control SMR)
+
+We will estimated the pairwise differences between each of the three trials at
+the minimum, mean and maximum control SMR.
+
+```{r posteriors1b, results='markdown', eval=TRUE, hidden=TRUE}
+norin.grid <- with(norin,  list(SMR_contr=Hmisc::smean.sdl(SMR_contr)))
+norin.grid
+norin.lme2c %>% emmeans(~TRIAL|SMR_contr,  at=norin.grid) %>% pairs()
+```
+
+**Conclusions:**
+
+- as control SMR increases, the magnitude of differences between the trials
+  becomes reduced.
+- the High Temperature trial resulted in the greatest positive change in SMR.
+- the change in SMR was not found to be different between the Hypoxia and Low
+  Salinity trials.
+
+### $R^2$
+
+```{r posteriors1c, results='markdown', eval=TRUE, hidden=TRUE}
+norin.lme2c %>% r.squaredGLMM()
+## Nakagawa's R2
+norin.lme2c %>% performance::r2_nakagawa()
+```
+
+## lmer (lmer) {.tabset .tabset-pills}
+
+### Compare slopes
+
+```{r posteriors2a, results='markdown', eval=TRUE, hidden=TRUE}
+norin.lmer2c %>% emtrends(~TRIAL, var='SMR_contr') %>% pairs()
+norin.emt <- norin.lmer2c %>% emtrends(~TRIAL, var='SMR_contr') %>% pairs() %>% as.data.frame
+```
+
+**Conclusions:**
+
+- the partial slope associated with control SMR during High Temperature was
+found to be `r -1*round(norin.emt[1, 2], 2)` units more negative than during
+Hypoxia (although not significant).  Note, we already had this partial slope in
+the original summary table.
+- the partial slope associated with control SMR during High Temperature was
+found to be `r -1*round(norin.emt[2, 2], 2)` units more negative than during
+Low Salinity (although not significant).  Note, we already had this partial slope in
+the original summary table.
+- the partial slope associated with control SMR during Hypoxia was
+found to be `r round(norin.emt[3, 2], 2)` units less negative than during
+Low Salinity (although not significant).  Note, we already had this partial slope in
+the original summary table.
+
+### Compare Trials (at different values of control SMR)
+
+```{r posteriors2b, results='markdown', eval=TRUE, hidden=TRUE}
+norin.grid <- with(norin,  list(SMR_contr=Hmisc::smean.sdl(SMR_contr)))
+norin.grid
+norin.lmer2c %>% emmeans(~TRIAL|SMR_contr,  at=norin.grid) %>% pairs()
+```
+
+**Conclusions:**
+
+- as control SMR increases, the magnitude of differences between the trials
+  becomes reduced.
+- the High Temperature trial resulted in the greatest positive change in SMR.
+- the change in SMR was not found to be different between the Hypoxia and Low
+  Salinity trials.
+
+### $R^2$
+
+```{r posteriors2c, results='markdown', eval=TRUE, hidden=TRUE}
+norin.lmer2c %>% r.squaredGLMM()
+## Nakagawa's R2
+norin.lmer2c %>% performance::r2_nakagawa()
+```
+
+## glmmTMB (glmmTMB) {.tabset .tabset-pills}
+
+### Compare slopes
+
+```{r posteriors3a, results='markdown', eval=TRUE, hidden=TRUE}
+norin.glmmTMB2c %>% emtrends(~TRIAL, var='SMR_contr') %>%  pairs() %>% summary(infer=TRUE)
+norin.emt <- norin.glmmTMB2c %>% emtrends(~TRIAL, var='SMR_contr') %>% pairs() %>% as.data.frame
+```
+
+**Conclusions:**
+
+- the partial slope associated with control SMR during High Temperature was
+found to be `r -1*round(norin.emt[1, 2], 2)` units more negative than during
+Hypoxia (although not significant).  Note, we already had this partial slope in
+the original summary table.
+- the partial slope associated with control SMR during High Temperature was
+found to be `r -1*round(norin.emt[2, 2], 2)` units more negative than during
+Low Salinity (although not significant).  Note, we already had this partial slope in
+the original summary table.
+- the partial slope associated with control SMR during Hypoxia was
+found to be `r round(norin.emt[3, 2], 2)` units less negative than during
+Low Salinity (although not significant).  Note, we already had this partial slope in
+the original summary table.
+
+### Compare Trials (at different values of control SMR)
+
+```{r posteriors3b, results='markdown', eval=TRUE, hidden=TRUE}
+norin.grid <- with(norin,  list(SMR_contr=Hmisc::smean.sdl(SMR_contr)))
+norin.grid
+norin.glmmTMB2c %>% emmeans(~TRIAL|SMR_contr,  at=norin.grid) %>% pairs() %>% summary(infer=TRUE)
+```
+
+**Conclusions:**
+
+- as control SMR increases, the magnitude of differences between the trials
+  becomes reduced.
+- the High Temperature trial resulted in the greatest positive change in SMR.
+- the change in SMR was not found to be different between the Hypoxia and Low
+  Salinity trials.
+
+### $R^2$
+
+```{r posteriors3c, results='markdown', eval=TRUE, hidden=TRUE}
+norin.glmmTMB2c %>% r.squaredGLMM()
+## Nakagawa's R2
+norin.glmmTMB2c %>% performance::r2_nakagawa()
+```
+
+
+</div>
+
+
+
+# Summary figures {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## lme (nlme)
+
+```{r summaryFigure1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=5}
+norin.grid <- with(norin, list(SMR_contr = modelr::seq_range(SMR_contr, n = 100)))
+newdata <- norin.lme2c %>% emmeans(~SMR_contr|TRIAL, at = norin.grid) %>%
+    as.data.frame
+head(newdata)
+
+ggplot(data = newdata, aes(y = emmean, x = SMR_contr)) +
+  geom_ribbon(aes(ymin = lower.CL, ymax = upper.CL, fill = TRIAL), alpha = 0.3) +
+  geom_line(aes(, color = TRIAL)) +
+  theme_classic() +
+  theme(legend.position = c(0.99, 0.99),
+        legend.justification = c(1, 1))
+
+## The .fixed values are the predicted values without random effects
+obs <- norin.lme2c %>%
+  augment() %>%
+  mutate(PartialObs=.fixed + .resid)
+
+ggplot(data=newdata, aes(y=emmean, x=SMR_contr)) +
+  geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL, fill=TRIAL), alpha=0.3) +
+  geom_line(aes(, color=TRIAL)) +
+  geom_point(data=obs,  aes(y=PartialObs,  color=TRIAL)) +
+  geom_point(data=norin,  aes(y=CHANGE), color='gray') +
+  theme_classic()
+```
+
+```{r summaryFigure1a2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=9, fig.height=4}
+g1 <- ggplot(data=newdata, aes(y=emmean, x=SMR_contr)) +
+  geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL, fill=TRIAL), alpha=0.3) +
+  geom_line(aes(, color=TRIAL)) +
+  geom_point(data=obs,  aes(y=PartialObs,  color=TRIAL)) +
+  theme_classic()
+g2 <- ggplot(data=newdata, aes(y=emmean, x=SMR_contr)) +
+  geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL, fill=TRIAL), alpha=0.3) +
+  geom_line(aes(, color=TRIAL)) +
+  geom_point(data=norin,  aes(y=CHANGE,  color=TRIAL)) +
+  theme_classic()
+g1 + g2
+```
+
+## lmer (lme4)
+
+```{r summaryFigure2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=5}
+norin.grid <- with(norin, list(SMR_contr = modelr::seq_range(SMR_contr, n = 100)))
+newdata <- norin.lmer2c %>% emmeans(~SMR_contr|TRIAL, at = norin.grid) %>%
+    as.data.frame
+head(newdata)
+
+ggplot(data = newdata, aes(y = emmean, x = SMR_contr)) +
+  geom_ribbon(aes(ymin = lower.CL, ymax = upper.CL, fill = TRIAL), alpha = 0.3) +
+  geom_line(aes(, color = TRIAL)) +
+  theme_classic() +
+  theme(legend.position = c(0.99, 0.99),
+        legend.justification = c(1, 1))
+
+## The .fixed values are the predicted values without random effects
+obs <- norin.lmer2c %>%
+  augment() %>%    ## unfortunately, augment.lmer does not back-transform the scale()
+    dplyr::rename(SMR_contr=contains('SMR_contr')) %>%
+    mutate(PartialObs=.fixed + .resid,
+           unscale(SMR_contr),
+           SMR_contr = V1) #because ggfortify::unscale() returns a data.frame
+
+ggplot(data=newdata, aes(y=emmean, x=SMR_contr)) +
+  geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL, fill=TRIAL), alpha=0.3) +
+  geom_line(aes(, color=TRIAL)) +
+  geom_point(data=obs,  aes(y=PartialObs,  color=TRIAL)) +
+  geom_point(data=norin,  aes(y=CHANGE), color='gray') +
+    theme_classic()
+
+```
+```{r summaryFigure2a2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=9, fig.height=4}
+g1 <- ggplot(data=newdata, aes(y=emmean, x=SMR_contr)) +
+  geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL, fill=TRIAL), alpha=0.3) +
+  geom_line(aes(, color=TRIAL)) +
+  geom_point(data=obs,  aes(y=PartialObs,  color=TRIAL)) +
+  theme_classic()
+g2 <- ggplot(data=newdata, aes(y=emmean, x=SMR_contr)) +
+  geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL, fill=TRIAL), alpha=0.3) +
+  geom_line(aes(, color=TRIAL)) +
+  geom_point(data=norin,  aes(y=CHANGE,  color=TRIAL)) +
+  theme_classic()
+g1 + g2
+```
+
+## glmmTMB (glmmTMB)
+
+```{r summaryFigure3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=5}
+norin.grid <- with(norin, list(SMR_contr = modelr::seq_range(SMR_contr, n = 100)))
+newdata <- norin.glmmTMB2c %>% emmeans(~SMR_contr|TRIAL, at = norin.grid) %>%
+    as.data.frame
+head(newdata)
+
+ggplot(data = newdata, aes(y = emmean, x = SMR_contr)) +
+  geom_ribbon(aes(ymin = lower.CL, ymax = upper.CL, fill = TRIAL), alpha = 0.3) +
+  geom_line(aes(, color = TRIAL)) +
+  theme_classic() +
+  theme(legend.position = c(0.99, 0.99),
+        legend.justification = c(1, 1))
+
+## The .fixed values are the predicted values without random effects
+obs <- norin %>%
+    mutate(.fixed = predict(norin.glmmTMB2c, re.form=NA),
+           .resid = residuals(norin.glmmTMB2c),
+           PartialObs=.fixed + .resid)
+
+ggplot(data=newdata, aes(y=emmean, x=SMR_contr)) +
+  geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL, fill=TRIAL), alpha=0.3) +
+  geom_line(aes(, color=TRIAL)) +
+  geom_point(data=obs,  aes(y=PartialObs,  color=TRIAL)) +
+  geom_point(data=norin,  aes(y=CHANGE), color='gray') +
+  theme_classic()
+```
+
+```{r summaryFigure3a2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=9, fig.height=4}
+
+g1 <- ggplot(data=newdata, aes(y=emmean, x=SMR_contr)) +
+  geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL, fill=TRIAL), alpha=0.3) +
+  geom_line(aes(, color=TRIAL)) +
+  geom_point(data=obs,  aes(y=PartialObs,  color=TRIAL)) +
+  theme_classic()
+g2 <- ggplot(data=newdata, aes(y=emmean, x=SMR_contr)) +
+  geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL, fill=TRIAL), alpha=0.3) +
+  geom_line(aes(, color=TRIAL)) +
+  geom_point(data=norin,  aes(y=CHANGE,  fill=TRIAL), color='black', shape=21) +
+  theme_classic()
+g1 + g2
+```
+
+</div>
+
+# References

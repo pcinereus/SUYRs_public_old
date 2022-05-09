@@ -1,0 +1,861 @@
+---
+title: "GLMM Part1"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../public/resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../public/resources/references.bib
+---
+
+```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(car)       #for regression diagnostics
+library(broom)     #for tidy output
+library(broom.mixed) ## for tidying mixed effects models
+library(ggfortify) #for model diagnostics
+library(sjPlot)    #for outputs
+library(knitr)     #for kable
+library(effects)   #for partial effects plots
+library(emmeans)   #for estimating marginal means
+library(ggeffects)  #for partial effects plots
+library(MASS)      #for glm.nb
+library(MuMIn)     #for AICc
+library(nlme)
+library(lme4)      #for lmer
+library(lmerTest)  #for satterthwaite p-values with lmer
+library(performance) #for residuals diagnostics
+library(see)         #for plotting residuals
+#library(pbkrtest)  #for kenward-roger p-values with lmer
+library(glmmTMB)   #for glmmTMB
+library(DHARMa)   #for residuals and diagnostics
+library(tidyverse) #for data wrangling
+```
+ 
+# Scenario
+
+A plant pathologist wanted to examine the effects of two different strengths of
+tobacco virus on the number of lesions on tobacco leaves.  She knew from pilot
+studies that leaves were inherently very variable in response to the virus.  In
+an attempt to account for this leaf to leaf variability, both treatments were
+applied to each leaf.  Eight individual leaves were divided in half, with half
+of each leaf inoculated with weak strength virus and the other half inoculated
+with strong virus.  So the leaves were blocks and each treatment was represented
+once in each block.  A completely randomised design would have had 16 leaves,
+with 8 whole leaves randomly allocated to each treatment.
+
+![Tobacco plant](../public/resources/TobaccoPlant.jpg){height="300"}
+
+![Sampling design](../public/resources/ws9.3aQ1.1.png)
+
+Format of tobacco.csv data files
+
+LEAF   TREAT    NUMBER
+------ -------- --------
+1      Strong   35.898
+1      Week     25.02
+2      Strong   34.118
+2      Week     23.167
+3      Strong   35.702
+3      Week     24.122
+\...   \...     \...
+
+------------ ----------------------------------------------------------------------------------------------------
+**LEAF**     The blocking factor - Factor B
+**TREAT**    Categorical representation of the strength of the tobacco virus - main factor of interest Factor A
+**NUMBER**   Number of lesions on that part of the tobacco leaf - response variable
+------------ ----------------------------------------------------------------------------------------------------
+
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+tobacco <- read_csv('../public/data/tobacco.csv', trim_ws = TRUE)
+glimpse(tobacco)
+```
+
+
+# Exploratory data analysis
+
+<div class='HIDDEN'>
+
+The response here represents the average number of lesions across a number of
+microscope views within a section of leaf.  As such, provided the averages are
+sufficiently far from 0, there is no a priori reason to suspect that the data
+would not follow a Gaussian distribution.
+
+</div>
+
+Model formula:
+$$
+y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
+\mu_i =\boldsymbol{\beta} \bf{X_i} + \boldsymbol{\gamma} \bf{Z_i}
+$$
+
+where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of the fixed
+and random effects parameters respectively and $\bf{X}$ is the model matrix
+representing the overall intercept and effects of the treatment on the number of
+lesions.  $\bf{Z}$ represents a cell means model matrix for the random
+intercepts associated with leaves.
+
+<div class='HIDDEN'>
+
+We will start by explicitly declaring the categorical variable (TREATMENT) as a
+factor.  In addition, random effects (in this case LEAF) should also be declared
+as factors.
+
+```{r tobaccoEDA1, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco <- tobacco %>%
+  mutate(LEAF = factor(LEAF),
+         TREATMENT = factor(TREATMENT))
+```
+
+To explore the assumptions of homogeneity of variance and normality, a boxplot
+of each Treatment level is appropriate.
+
+```{r tobaccoEDA2, results='markdown', eval=TRUE, hidden=TRUE}
+ggplot(tobacco,  aes(y=NUMBER,  x=TREATMENT)) +
+  geom_boxplot()
+```
+
+**Conclusions:**
+
+- both normality and homogeneity of variance seem satisfied
+
+It can also be useful to get a sense of the consistency across blocks (LEAF).
+That is, do all Leaves have a similar baseline level of lesion susceptibility
+and do they respond similarly to the treatment.
+
+```{r tobaccoEDA3, results='markdown', eval=TRUE, hidden=TRUE}
+ggplot(tobacco,  aes(y = NUMBER,  x = as.numeric(LEAF))) +
+  geom_line(aes(linetype = TREATMENT))
+
+## If we want to retain the original LEAF labels
+ggplot(tobacco,  aes(y = NUMBER,  x = as.numeric(LEAF))) +
+  geom_blank(aes(x = LEAF)) +
+  geom_line(aes(linetype = TREATMENT))
+```
+
+**Conclusions:**
+
+- it is clear that some leaves are more susceptible to lesions (e.g. Leaf 7)
+  than other leaves (e.g. Leaf 4)
+- most leaves (other than Leaf 4 and 6) have a similar response to the
+  Treatments - that is most have higher number of lesions from the Strong
+  Treatment than the Weak Treatment.
+
+Given that there are only two levels of Treatment (Strong and Weak), it might be
+easier to visualise the differences in baselines and effect consistency by
+plotting as:
+
+```{r tobaccoEDA4, results='markdown', eval=TRUE, hidden=TRUE}
+ggplot(tobacco,  aes(y = NUMBER, x = TREATMENT,  group = LEAF)) +
+  geom_point() +
+  geom_line(aes(x = as.numeric(TREATMENT))) 
+```
+
+**Conclusions:**
+
+- this figure reiterates the points made earlier about the varying baselines and
+  effect consistency.
+
+The above figure also serves as a good way to visualise certain aspects of mixed
+effects models.  When we fit a mixed effects model that includes a random
+blocking effect (in this case LEAF), we are indicating that we are allowing
+there to be a different intercept for each block (LEAF).  In the current case,
+the intercept will represent the first Treatment level (Strong).  So the random
+effect is specifying that the intercept can vary from Leaf to Leaf.
+
+We can think of the model as having two tiers (a hierarchy), where the tiers of
+the hierarchy represent progressively smaller (typically) spatial scales.  In
+the current example, the largest spatial units are the leaves (blocking factor).
+Within the leaves, there are the two Treatments (Strong and Weak) and within the
+Treatments are the individual observations.
+
+We tend to represent this hierarchy upside down in the model formula:
+
+$$
+y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
+\mu_i =\beta_0 + \boldsymbol{\beta} \bf{X_i}\\
+\beta_0 = \boldsymbol{\gamma} \bf{Z_i}
+$$
+
+In addition to allowing there to be a different intercept per leaf, we could
+allow there to be a different magnitude of effect (difference between Strong and
+Week Treatment) per leaf.  That is considered a random slope. From the figure
+above, there is some evidence that the effects (slopes) may vary from Leaf to Leaf.
+
+Incorporating a random slope (in addition to a random intercept), may reduce the
+amount of unexplained variance and thus improve the power of the main effect
+(Treatment effect).
+
+</div>
+
+# Fit the model {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+As with Generalized Linear Models (GLM), Generalized Linear Mixed Models (GLMM)
+are fitted using maximum likelihood.  However, for models containing random
+effects, maximum likelihood estimates are known to be biased.  To correct this
+bias, rather than use maximum likelihood, we can use Residual Maximum Likelihood
+(REML).  REML maximises the likelihood of the residuals instead of maximising
+the likelihood of the observed data.
+
+## lme (nlme)
+
+```{r fitModel1a, results='markdown', eval=TRUE, hidden=TRUE}
+## Fit the random intercepts model
+tobacco.lme <- lme(NUMBER ~ TREATMENT,  random = ~1|LEAF,  data = tobacco,  method = 'REML')
+## Fit the random intercepts/slope model
+tobacco.lme1 <- lme(NUMBER ~ TREATMENT,  random = ~TREATMENT|LEAF,  data = tobacco,  method = 'REML')
+```
+
+Having now fit the two models (a random intercept model and a random
+intercept/slope model), we can use AIC (or AICc) to determine which model is 'best'.
+
+```{r fitModel1b, results='markdown', eval=TRUE, hidden=TRUE}
+AICc(tobacco.lme,  tobacco.lme1)
+```
+
+**Conclusions:**
+
+- on the basis of AICc, we would conclude that the random intercepts model is
+  the best (it had the lowest AICc).  Technically, both AICc values were within
+  2 units of each other and therefore where not considered significantly
+  different.  We would therefore chose models on the basis of complexity (lower
+  complexity, the better).  Therefore, we would chose the random intercepts
+  model (if has the fewer used degrees of freedom).
+  
+Alternatively, we could use a likelihood ratio test (LRT).
+
+```{r fitModel1c, results='markdown', eval=TRUE, hidden=TRUE}
+anova(tobacco.lme,  tobacco.lme1) %>% print
+```
+
+**Conclusions:**
+
+- there is no inferential evidence that the two models are different from one
+another, hence we would go with the simplest model (`tobacco.lme` - the random
+intercepts model). 
+
+## lmer (lme4)
+
+```{r fitModel2a, results='markdown', eval=TRUE, hidden=TRUE}
+## Fit the random intercepts model
+tobacco.lmer <- lmer(NUMBER ~ TREATMENT + (1|LEAF),  data = tobacco, REML = TRUE)
+## Fit the random intercepts/slope model
+## Note the following could not be run in lmer as there was not enough observations
+## to estimate all of the effects and random effects.
+## tobacco.lmer1 <- lmer(NUMBER ~ TREATMENT + (TREATMENT|LEAF),  data=tobacco, REML=TRUE)
+## tobacco.lmer1 <- lmer(NUMBER ~ TREATMENT + (TREATMENT|LEAF),  data=tobacco, REML=TRUE,
+##                       control = lmerControl(
+##                           check.nobs.vs.nRE = "ignore",
+##                           optimizer = 'optim',
+##                           optCtrl = list(method = 'BFGS'))
+##                       )
+```
+
+If we had been able to fit both models (the random intercept model and the random
+intercept/slope model), we could have used AIC (or AICc) to determine which
+model is 'best'.  As it is, we only have the random intercepts model.
+
+```{r fitModel2b, results='markdown', eval=TRUE, hidden=TRUE}
+#AICc(tobacco.lme,  tobacco.lme1)
+```
+  
+Similarly, we could have used a likelihood ratio test (LRT).
+
+```{r fitModel2c, results='markdown', eval=TRUE, hidden=TRUE}
+#anova(tobacco.lme,  tobacco.lme1) %>% print
+```
+
+## glmmTMB (glmmTMB)
+
+Optimizers include:
+
+- `nlminb` (non linear optimiser)
+- `Nelder-Mead` - robust but relatively slow
+- `BFGS` - quasi-Newton method (acronym of authors) - gradient based
+  - fast, but less robust as requires function to be differentiable
+- `L-BFGS-B` - as above but with different constraints
+- `SANN` - simulated annealing - relatively slow
+
+`glmmTMB` uses the `nlminb` (nonlinear minimizer)
+
+```{r fitModel3a, results='markdown', eval=TRUE, hidden=TRUE}
+## Fit the random intercepts model
+tobacco.glmmTMB <- glmmTMB(NUMBER ~ TREATMENT + (1|LEAF),
+                           data = tobacco, REML = TRUE)
+## Fit the random intercepts/slope model
+## Note the following model did not converge - probably due to insufficient data.
+tobacco.glmmTMB1 <- glmmTMB(NUMBER ~ TREATMENT + (TREATMENT|LEAF),
+                            data = tobacco, REML = TRUE)
+## Try a different optimizer (BFGS)
+tobacco.glmmTMB1 <- glmmTMB(NUMBER ~ TREATMENT + (TREATMENT|LEAF),
+                            data = tobacco, REML = TRUE,
+                            control = glmmTMBControl(optimizer = 'optim',
+                                                   optArgs='BFGS'))
+                                                   ## optArgs = 'Nelder-Mead'))
+```
+
+If we had been able to fit both models (the random intercept model and the random
+intercept/slope model), we could have used AIC (or AICc) to determine which
+model is 'best'.  As it is, we only have the random intercepts model.
+
+```{r fitModel3b, results='markdown', eval=TRUE, hidden=TRUE}
+AICc(tobacco.glmmTMB,  tobacco.glmmTMB1)
+```
+  
+Similarly, we could have used a likelihood ratio test (LRT).
+
+```{r fitModel3c, results='markdown', eval=TRUE, hidden=TRUE}
+anova(tobacco.glmmTMB,  tobacco.glmmTMB1) %>% print
+```
+
+</div>
+
+# Model validation {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## lme (nlme) {.tabset .tabset-pills}
+
+### plot_model
+
+```{r modelValidation1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8}
+#autoplot(tobacco.lme)
+tobacco.lme %>% plot_model(type='diag') %>%  plot_grid()
+```
+
+**Conclusions:**
+
+- all the diagnostics look look reasonable
+
+### Performance model checking
+
+```{r modelValidation1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8}
+tobacco.lme %>% performance::check_model()
+```
+
+**Conclusions:**
+
+- all the diagnostics look look reasonable
+
+### DHARMa residuals
+
+```{r modelValidation1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8}
+## unfortunately,  nlme is not supported...
+#tobacco.resid = simulateResiduals(tobacco.lme,  plot=TRUE)
+```
+
+## lmer (lme4) {.tabset .tabset-pills}
+
+### plot_model
+
+`plot_model()` and `plot_grid()` are of limited value for mixed effects models since:
+
+- the random effects are themselves a list and so do not play nicely with `plot_grid()`
+- the diagnostic plots (such as linearity and homoscadasticity) **do not** take
+  into account the uncertainty of random effects.
+
+```{r modelValidation2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8}
+plot_model(tobacco.lmer, type='diag')[-2] %>% plot_grid()
+```
+
+**Conclusions:**
+
+- all the diagnostics look look reasonable
+
+### Performance model checking
+
+```{r modelValidation2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8}
+tobacco.lmer %>% performance::check_model()
+```
+
+**Conclusions:**
+
+- all the diagnostics look look reasonable
+
+### DHARMa residuals
+
+```{r modelValidation2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+tobacco.resid <- tobacco.lmer %>% simulateResiduals(plot=TRUE)
+```
+
+**Conclusions:**
+
+- all the diagnostics look look reasonable
+
+## glmmTMB (glmmTMB) {.tabset .tabset-pills}
+
+### plot_model
+
+`plot_model()` and `plot_grid()` are of limited value for mixed effects models since:
+
+- the random effects are themselves a list and so do not play nicely with `plot_grid()`
+- the diagnostic plots (such as linearity and homoscadasticity) **do not** take
+  into account the uncertainty of random effects.
+  
+```{r modelValidation3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8}
+plot_model(tobacco.glmmTMB,  type='diag')[-2] %>% plot_grid()
+```
+
+**Conclusions:**
+
+- all the diagnostics look look reasonable
+
+### Performance model checking
+
+```{r modelValidation3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8}
+tobacco.glmmTMB %>% performance::check_model()
+```
+
+**Conclusions:**
+
+- all the diagnostics look look reasonable
+
+### DHARMa residuals
+
+```{r modelValidation3c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+tobacco.resid <- tobacco.glmmTMB %>% simulateResiduals(plot=TRUE)
+```
+
+**Conclusions:**
+
+- all the diagnostics look look reasonable
+
+</div>
+
+# Partial plots {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## lme (nlme) {.tabset .tabset-pills}
+
+### plot_model
+
+Unfortunately, `plot_model` does not support lme models.
+
+```{r partialPlots1a, results='markdown', eval=TRUE, hidden=TRUE}
+#plot_model(tobacco.lme,  type='eff')
+```
+### allEffects
+
+```{r partialPlots1b, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.lme %>% allEffects() %>% plot()
+```
+
+### ggpredict
+There is a rather obtuse issue with `ggpredict`. Due to downstream processing
+(using `predict()`), models fit with data in the form of a tibble will not work.
+In order to use `ggpredict` on a `lme` model, it is necessary to ensure that the
+data are `data.frame`.  We can simply update the model..
+
+```{r partialPlots1c, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.lme1 <- update(tobacco.lme, data=as.data.frame(tobacco))
+tobacco.lme1 %>% ggpredict(terms='TREATMENT') %>% plot()
+```
+
+### ggemmeans
+
+```{r partialPlots1d, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.lme1 <- update(tobacco.lme, data=as.data.frame(tobacco))
+tobacco.lme1 %>% ggemmeans(~TREATMENT) %>% plot()
+```
+
+## lmer (lme4) {.tabset .tabset-pills}
+
+### plot_model
+
+```{r partialPlots2a, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.lmer %>% plot_model(type='eff')
+```
+
+### allEffects
+
+```{r partialPlots2b, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.lmer %>% allEffects() %>% plot()
+```
+
+### ggpredict
+
+```{r partialPlots2c, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.lmer %>% ggpredict(terms='TREATMENT') %>% plot
+```
+
+### ggemmeans
+
+```{r partialPlots2d, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.lmer %>% ggemmeans(~TREATMENT) %>% plot
+```
+
+## glmmTMB (glmmTMB) {.tabset .tabset-pills}
+
+### plot_model
+
+```{r partialPlots3a, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.glmmTMB %>% plot_model(type='eff')
+```
+
+### allEffects
+
+```{r partialPlots3b, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.glmmTMB %>% allEffects() %>% plot()
+```
+
+### ggpredict
+
+```{r partialPlots3c, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.glmmTMB %>% ggpredict(terms='TREATMENT') %>% plot
+```
+
+### ggemmeans
+
+```{r partialPlots3d, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.glmmTMB %>% ggemmeans(~TREATMENT) %>% plot
+```
+
+</div>
+
+# Model investigation / hypothesis testing {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## lme (nlme) {.tabset .tabset-pills}
+
+### summary
+
+```{r investigateModel1a, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.lme %>% summary()
+## to get confidence intervals
+tobacco.lme %>% intervals()
+```
+
+**Conclusions:**
+
+- the intercept indicates that the Strong treatment has an average of 
+  `r round(fixef(tobacco.lme)[1], 2)` lesions.
+- the Weak treatment has `r round(-1*fixef(tobacco.lme)[2], 2)` fewer lesions. 
+- the variance in intercepts across all Leaves is 
+  `r round(as.numeric(as.matrix(VarCorr(tobacco.lme))[1, 1]),2)`
+- the scale of variance between Leaves is very similar to the variance within Leaves.
+
+### tidy
+
+```{r investigateModel1b, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.lme %>% tidy(effects='fixed', conf.int=TRUE)
+## including the random effects
+tobacco.lme %>% tidy(conf.int=TRUE)
+```
+
+**Conclusions:**
+
+- the intercept indicates that the Strong treatment has an average of 
+  `r round(fixef(tobacco.lme)[1], 2)` lesions.
+- the Weak treatment has `r round(-1*fixef(tobacco.lme)[2], 2)` fewer lesions. 
+- the variance in intercepts across all Leaves is 
+  `r round(as.numeric(as.matrix(VarCorr(tobacco.lme))[1, 1]),2)`
+- the scale of variance between Leaves is very similar to the variance within Leaves.
+
+### tab_model
+
+```{r investigateModel1c, results='markdown', eval=TRUE, hidden=TRUE}
+# warning this is only appropriate for html output
+tobacco.lme %>% sjPlot::tab_model(show.se=TRUE,show.aic=TRUE)
+```
+
+### $R^2$
+
+```{r investigateModel1d, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.lme %>% r.squaredGLMM()
+## Nakagawa's R2
+tobacco.lme %>% performance::r2_nakagawa()
+```
+
+**Conclusions:**
+
+- `r 100*round(r.squaredGLMM(tobacco.lme)[1], 2)`% of the total variance in number
+  of lesions is explained by the fixed effects (Treatment) - this is the
+  marginal R2
+- `r 100*round(r.squaredGLMM(tobacco.lme)[2], 2)`% of the total variance in number
+  of lesions is explained by the fixed and random effects - this is the
+  conditional R2
+
+## lmer (lme4) {.tabset .tabset-pills}
+
+### summary
+
+```{r investigateModel2a, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.lmer %>% summary()
+## to get confidence intervals
+tobacco.lmer %>% confint()
+```
+
+**Conclusions:**
+
+- the intercept indicates that the Strong treatment has an average of 
+  `r round(fixef(tobacco.lmer)[1], 2)` lesions.
+- the Weak treatment has `r round(-1*fixef(tobacco.lmer)[2], 2)` fewer lesions. 
+- the variance in intercepts across all Leaves is 
+  `r as.numeric(round(tidy(tobacco.lmer)[4, 4],2))`
+- the scale of variance between Leaves is very similar to the variance within Leaves.
+
+
+### tidy
+
+```{r investigateModel2b, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.lmer %>% tidy(effects='fixed', conf.int=TRUE)
+## including the random effects
+tobacco.lmer %>% tidy(conf.int=TRUE)
+```
+
+**Conclusions:**
+
+- the intercept indicates that the Strong treatment has an average of 
+  `r round(fixef(tobacco.lmer)[1], 2)` lesions.
+- the Weak treatment has `r round(-1*fixef(tobacco.lmer)[2], 2)` fewer lesions. 
+- the variance in intercepts across all Leaves is 
+  `r as.numeric(round(tidy(tobacco.lmer)[4, 4],2))`
+- the scale of variance between Leaves is very similar to the variance within Leaves.
+
+### tab_model
+
+```{r investigateModel2c, results='markdown', eval=TRUE, hidden=TRUE}
+# warning this is only appropriate for html output
+tobacco.lmer %>% sjPlot::tab_model(show.se=TRUE, show.aic=TRUE)
+```
+
+### $R^2$
+
+```{r investigateModel2d, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.lmer %>% r.squaredGLMM()
+## Nakagawa's R2
+tobacco.glmmTMB %>% performance::r2_nakagawa()
+```
+
+**Conclusions:**
+
+- `r 100*round(r.squaredGLMM(tobacco.lmer)[1], 2)`% of the total variance in number
+  of lesions is explained by the fixed effects (Treatment) - this is the
+  marginal R2
+- `r 100*round(r.squaredGLMM(tobacco.lmer)[2], 2)`% of the total variance in number
+  of lesions is explained by the fixed and random effects - this is the
+  conditional R2
+
+## glmmTMB (glmmTMB) {.tabset .tabset-pills}
+
+### summary
+
+```{r investigateModel3a, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.glmmTMB %>% summary()
+tobacco.glmmTMB %>% vcov()
+## the following is not compatible with piping
+cov2cor(vcov(tobacco.glmmTMB)$cond)
+## to get confidence intervals
+tobacco.glmmTMB %>% confint()
+tobacco.glmmTMB %>% ranef()
+```
+
+**Conclusions:**
+
+- the intercept indicates that the Strong treatment has an average of 
+  `r round(fixef(tobacco.glmmTMB)[[1]][1], 2)` lesions.
+- the Weak treatment has `r round(-1*fixef(tobacco.glmmTMB)[[1]][2], 2)` fewer lesions. 
+- the variance in intercepts across all Leaves is 
+  `r as.numeric(round(tidy(tobacco.glmmTMB)[4, 5],2))`
+- the scale of variance between Leaves is very similar to the variance within Leaves.
+
+### tidy
+
+```{r investigateModel3b, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.glmmTMB %>% tidy(effects='fixed', conf.int=TRUE)
+## including the random effects
+tobacco.glmmTMB %>% tidy(conf.int=TRUE)
+```
+
+**Conclusions:**
+
+- the intercept indicates that the Strong treatment has an average of 
+  `r round(fixef(tobacco.glmmTMB)[[1]][1], 2)` lesions.
+- the Weak treatment has `r round(-1*fixef(tobacco.glmmTMB)[[1]][2], 2)` fewer lesions. 
+- the variance in intercepts across all Leaves is 
+  `r as.numeric(round(tidy(tobacco.glmmTMB)[4, 5],2))`
+- the scale of variance between Leaves is very similar to the variance within Leaves.
+
+### tab_model
+
+```{r investigateModel3c, results='markdown', eval=TRUE, hidden=TRUE}
+# warning this is only appropriate for html output
+tobacco.glmmTMB %>% sjPlot::tab_model(show.se=TRUE,show.aic=TRUE)
+```
+
+### $R^2$
+
+```{r investigateModel3d, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.glmmTMB %>% r.squaredGLMM()
+## Nakagawa's R2
+tobacco.glmmTMB %>% performance::r2_nakagawa()
+```
+
+**Conclusions:**
+
+- `r 100*round(r.squaredGLMM(tobacco.glmmTMB)[1], 2)`% of the total variance in number
+  of lesions is explained by the fixed effects (Treatment) - this is the
+  marginal R2
+- `r 100*round(r.squaredGLMM(tobacco.glmmTMB)[2], 2)`% of the total variance in number
+  of lesions is explained by the fixed and random effects - this is the
+  conditional R2
+
+</div>
+
+# Predictions {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+Given that there was only two levels of a single predictor, the only follow up
+analysis might be to explore hypotheses around effects of specific magnitudes.
+For example, we could investigate whether the strong inoculation treatment
+increases the number of lesions by over a specific amount.  For this example,
+lets explore the likelihood that the Strong treatment could result in an
+increase in lesions of over 2 (on average) compared to the Weak treatment.
+
+## lme (nlme) {.tabset .tabset-pills}
+
+### glht
+
+```{r prediction1a, results='markdown', eval=TRUE}
+tobacco.lme %>% multcomp::glht(linfct=c('TREATMENTWeak=-2')) %>% summary
+```
+
+**Conclusions:**
+
+- there is evidence that the Strong treatment does result in a more than 2 unit
+  increase in the number of lesions.
+
+### hypothesis
+
+```{r prediction1b, cache=TRUE, results='markdown', eval=TRUE}
+## lme not supported
+#brms::hypothesis(tobacco.lme, 'TREATMENTWeak < -2')
+```
+
+
+## lmer (lme4) {.tabset .tabset-pills}
+
+### glht
+
+```{r prediction2a, results='markdown', eval=TRUE}
+tobacco.lmer %>% multcomp::glht(linfct=c('TREATMENTWeak=-2')) %>% summary
+```
+
+**Conclusions:**
+
+- there is evidence that the Strong treatment does result in a more than 2 unit
+  increase in the number of lesions.
+
+### hypothesis
+
+```{r prediction2b, cache=TRUE, results='markdown', eval=TRUE}
+tobacco.lmer %>% brms::hypothesis('TREATMENTWeak < -2')
+```
+**Conclusions:**
+
+- there is very strong evidence (Post.Prob = 1) that the Strong treatment does
+  result in a more than 2 unit increase in the number of lesions.
+
+
+## glmmTMB (glmmTMB) {.tabset .tabset-pills}
+
+### glht
+
+```{r prediction3a, results='markdown', eval=TRUE}
+tobacco.glmmTMB %>% multcomp::glht(linfct=c('TREATMENTWeak=-2')) %>% summary
+```
+
+**Conclusions:**
+
+- there is evidence that the Strong treatment does result in a more than 2 unit
+  increase in the number of lesions.
+
+### hypothesis
+
+```{r prediction3b, cache=TRUE, results='markdown', eval=TRUE}
+## Does not appear to work for glmmTMB?
+                                        #brms::hypothesis(tobacco.glmmTMB, 'TREATMENTWeak < -2')
+```
+
+</div>
+
+# Summary figures {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## lme (nlm)
+
+```{r summaryFigure1a, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.lme %>% emmeans(~TREATMENT) %>%
+  as.data.frame %>%
+  ggplot() +
+  geom_pointrange(aes(y=emmean,  x=TREATMENT,  ymin=lower.CL,  ymax=upper.CL))
+```
+
+## lmer (lme4)
+
+```{r summaryFigure2a, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.lmer %>% emmeans(~TREATMENT) %>%
+  as.data.frame() %>%
+  ggplot() +
+  geom_pointrange(aes(y=emmean,  x=TREATMENT,  ymin=lower.CL,  ymax=upper.CL))
+```
+
+## glmmTMB (glmmTMB)
+
+```{r summaryFigure3a, results='markdown', eval=TRUE, hidden=TRUE}
+tobacco.glmmTMB %>% emmeans(~TREATMENT) %>%
+  as.data.frame() %>%
+  ggplot() +
+  geom_pointrange(aes(y=emmean,  x=TREATMENT,  ymin=lower.CL,  ymax=upper.CL))
+```
+
+</div>
+# References

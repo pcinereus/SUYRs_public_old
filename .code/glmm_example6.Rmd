@@ -1,0 +1,1459 @@
+---
+title: "GLMM example 6"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../public/resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../public/resources/references.bib
+---
+
+```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(car)       #for regression diagnostics
+library(broom)     #for tidy output
+library(broom.mixed) #for tidy output
+library(ggfortify) #for model diagnostics
+library(sjPlot)    #for outputs
+library(knitr)     #for kable
+library(effects)   #for partial effects plots
+library(ggeffects) #for effects plots in ggplotjk
+library(emmeans)   #for estimating marginal means
+library(MASS)      #for glm.nb
+library(MuMIn)     #for AICc
+library(tidyverse) #for data wrangling
+library(DHARMa)    #for assessing dispersion etc
+library(glmmTMB)    #for glmmTMB
+library(performance) #for diagnostic plots
+library(see)         #for diagnostic plots
+library(patchwork)   #for multiple plots
+```
+
+# Scenario
+	
+![fanworms](../public/resources/fanworms.jpg){width="157" height="160"}
+
+In an attempt to understand the effects on marine animals of short-term
+exposure to toxic substances, such as might occur following a spill, or
+a major increase in storm water flows, a it was decided to examine the
+toxicant in question, Copper, as part of a field experiment in Hong
+Kong. The experiment consisted of small sources of Cu (small,
+hemispherical plaster blocks, impregnated with copper), which released
+the metal into sea water over 4 or 5 days. The organism whose response
+to Cu was being measured was a small, polychaete worm, Hydroides, that
+attaches to hard surfaces in the sea, and is one of the first species to
+colonise any surface that is submerged. The biological questions focused
+on whether the timing of exposure to Cu affects the overall abundance of
+these worms. The time period of interest was the first or second week
+after a surface being available.
+
+The experimental setup consisted of sheets of black perspex (settlement
+plates), which provided good surfaces for these worms. Each plate had a
+plaster block bolted to its centre, and the dissolving block would
+create a gradient of [Cu] across the plate. Over the two weeks of the
+experiment, a given plate would have plain plaster blocks (Control) or a
+block containing copper in the first week, followed by a plain block, or
+a plain block in the first week, followed by a dose of copper in the
+second week. After two weeks in the water, plates were removed and
+counted back in the laboratory. Without a clear idea of how sensitive
+these worms are to copper, an effect of the treatments might show up as
+an overall difference in the density of worms across a plate, or it
+could show up as a gradient in abundance across the plate, with a
+different gradient in different treatments. Therefore, on each plate,
+the density of worms (\#/cm^2^) was recorded at each of four distances
+from the centre of the plate.
+
+Format of copper.csv data file
+
+COPPER   PLATE   DIST   WORMS   AREA   COUNT
+-------- ------- ------ ------- ------ -------
+..       ..      ..     ..      ..     ..
+
+------------ -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+**COPPER**   Categorical listing of the copper treatment (control = no copper applied, week 2 = copper treatment applied in second week and week 1= copper treatment applied in first week) applied to whole plates. Factor A (between plot factor).
+**PLATE**    Substrate provided for polychaete worm colonisation on which copper treatment applied. These are the plots (Factor B). Numbers in this column represent numerical labels given to each plate.
+**DIST**     Categorical listing for the four concentric distances from the center of the plate (source of copper treatment) with 1 being the closest and 4 the furthest. Factor C (within plot factor)
+**WORMS**    Density (\#/cm~2~) of worms measured. Response variable.
+------------ -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+copper = read_csv('../public/data/copper.csv', trim_ws=TRUE)
+glimpse(copper)
+```
+
+# Data preparation
+<div class='HIDDEN'>
+
+Let start by declaring the categorical variables and random effect as factors.
+
+```{r dataProcessing, results='markdown', eval=TRUE, hidden=TRUE}
+copper = copper %>%
+    mutate(COPPER = factor(COPPER),
+           PLATE = factor(PLATE),
+           DIST = factor(DIST))
+```
+
+</div>
+
+# Exploratory data analysis
+
+<div class='HIDDEN'> 
+
+In the current example, the response is worm density.  Density (count per area)
+is a particularly hard variable to model against because it has both count and
+measurement properties.  In some ways, it is easier to model the count against a
+Poisson (or Negative Binomial) distribution and then use an offset for Area so
+as to effectively model density.  Unfortunately, we only have the densities (not
+the original counts and areas).
+
+We therefore have six options (if density does not follow a Gaussian
+distribution - which it is unlikely to do):
+
+- normalise the densities with a logarithmic transform.  This is the second least
+  favourable option, as the model will no longer reflect the underlying data
+  generation process so well.
+- normalise the densities with a square-root transform.  This is the least
+  favourable option, as not only will the model no longer reflect the underlying
+  data generation process, it may not be possible to sensibly back-transform any
+  predictions.
+- fit the model against a log-normal distribution. 
+- fit the model against a gamma distribution.  Note, the gamma distribution does
+  not allow response values of 0, so we would need to add a small value to the
+  zero cases.
+- fit the model against a Tweedie distribution.  This distribution floats
+  somewhere between a Poisson and a Gamma.
+- fit the model against a truncated Gaussian.  Unfortunately, I don't think this
+  is possible with the Frequentest tools available.  It is however possible with
+  Bayesian tools.
+  
+</div>
+
+Model formula:
+$$
+y_i \sim{} \mathcal{Gamma}(\lambda_i, \phi)\\
+ln(\lambda_i) =\boldsymbol{\beta} \bf{X_i} + \boldsymbol{\gamma} \bf{Z_i}
+$$
+
+where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of the fixed
+and random effects parameters respectively and $\bf{X}$ is the model matrix
+representing the overall intercept and effects of copper, distance and their
+interaction on the number of number of worms. $\bf{Z}$ represents a cell means
+model matrix for the random intercepts associated with individual plates. $\phi$
+represents the shape parameter of the Gamma distribution.
+
+
+<div class='HIDDEN'>
+
+Let start by exploring the patterns in worm density against both distance and
+the copper treatment.
+
+```{r eda1, results='markdown', eval=TRUE, hidden=TRUE}
+ggplot(copper, aes(y = WORMS, x = DIST, fill = COPPER)) +
+  geom_boxplot()
+```
+
+**Conclusions:**
+
+- there is clear evidence of a relationship between mean and variance (as might
+  be expected from data that is derived from counts).
+- we can mimic the effects of using log-link, by using a log-transformed y-axis
+
+```{r eda2, results='markdown', eval=TRUE, hidden=TRUE}
+ggplot(copper, aes(y = WORMS, x = DIST, fill = COPPER)) +
+    geom_boxplot() +
+    scale_y_continuous(trans = scales::pseudo_log_trans())
+```
+
+**Conclusions:**
+
+- if anything, the log-transform is too much..
+
+It might also be useful to see the raw data
+
+```{r eda3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=2.5}
+g1 <- ggplot(copper, aes(y = WORMS, x = DIST, colour = COPPER)) +
+  geom_point(position = position_jitter(height = 0, width = 0.1)) +
+  scale_y_continuous() 
+g2 <- ggplot(copper, aes(y = WORMS, x = DIST, colour = COPPER)) +
+  geom_point(position = position_jitter(height = 0, width = 0.1)) +
+  scale_y_continuous(trans = scales::pseudo_log_trans()) 
+g3 <- ggplot(copper, aes(y = WORMS, x = DIST, colour = COPPER)) +
+  geom_point(position = position_jitter(height = 0, width = 0.1)) +
+  scale_y_sqrt() 
+g1 + g2 + g3
+```
+
+**Conclusions:**
+
+- three of the five Week 2, Distance 1 observations are zero
+- the patterns of variance are complex and not simply a function of the mean
+  (which would have been expected of a Poisson based distribution).
+- so while a log-transformation might be useful to impose a floor on the
+  predictions, such a transformation might violate dispersion or homogeneity
+  assumptions.
+- modelling square-root transformed data might satisfy the assumptions best -
+  although then there are issues with back-transforming any predictions and
+  associated confidence intervals.
+  
+  
+
+We can also explore the distance effects for each PLATE
+
+```{r eda4, results='markdown', eval=TRUE, hidden=TRUE}
+ggplot(copper, aes(y = WORMS, x = as.numeric(PLATE), color = DIST)) +
+    geom_line() +
+    facet_wrap(~COPPER)
+```
+
+**Conclusions:**
+
+- the Distance effect is fairly consistent between plates - worm density is typically highest
+  at Distance 4, then 3, then 2 and finally 1.
+- the copper treatment effect is also very consistent between plates - the
+  control has higher density than Week 1, and Week 2 has the lowest density.
+
+</div>
+
+<div class='HIDDEN'>
+
+Lets make the minimum half the next smallest value
+```{r dataProcessing1, results='markdown', eval=TRUE, hidden=TRUE}
+copper %>% filter(WORMS > 0) %>% summarize(min = min(WORMS)/2)
+copper = copper %>% mutate(WORMSp = ifelse(WORMS == 0, 0.125, WORMS))
+```
+
+</div>
+
+
+# Fit the model {.tabset .tabset-faded}
+<div class='HIDDEN'>
+
+Exploratory data analysis suggested that there might be an issue with
+homogeneity of variance above what might be expected to be addressed by a
+log-link.
+One way of dealing with this is to relax the homogeneity of variance assumption
+and instead indicate that variance (dispersion) should be calculated separately
+per group.  This is supported in `glmmTMB`, however there has been an issue with
+calculating confidence intervals when this is the case.  To address this (as of
+Sept 2020), the glmmTMB development team suggest installing glmmTMB from GitHub
+to get the latest fixes.
+
+```{r github, results='markdown', eval=FALSE}
+remotes::install_github("glmmTMB/glmmTMB/glmmTMB")
+```
+
+## Gaussian {.tabset .tabset-pills}
+
+Whilst it might have been a bit difficult to determine whether or not normality
+was satisfied, it was more clear that variances were not equal between the
+treatments.  `glmmTMB` allows us to fit models in which the variance is modelled
+against predictors.
+
+### random structure
+
+```{r fitModel4b, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB1a <- glmmTMB(WORMS ~ COPPER*DIST + (1|PLATE),
+                           dispformula = ~COPPER*DIST, 
+                           data = copper,
+                           family = gaussian(), 
+                           REML = TRUE,
+                           control=glmmTMBControl(optimizer=optim,
+                                                  optArgs = list(method = 'BFGS'))
+                           )
+
+copper.glmmTMB1b <- glmmTMB(WORMS ~ COPPER*DIST + (DIST|PLATE),
+                           dispformula = ~COPPER*DIST, 
+                           data = copper,
+                           family = gaussian(), 
+                           REML = TRUE,
+                           control=glmmTMBControl(optimizer=optim,
+                                                  optArgs = list(method = 'BFGS'))
+                           )
+AICc(copper.glmmTMB1a, copper.glmmTMB1b)
+## copper.glmmTMB1 <- update(copper.glmmTMB1, REML=TRUE)
+```
+
+**Conclusions:**
+
+- use the simpler random structure.
+
+## square-root (Gaussian) {.tabset .tabset-pills}
+
+### random structure
+
+```{r fitModel5b, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB2a <- glmmTMB(sqrt(WORMS) ~ COPPER*DIST + (1|PLATE),
+                             dispformula = ~COPPER*DIST, 
+                            data = copper,
+                            family = gaussian(), 
+                            REML = TRUE)
+copper.glmmTMB2b <- glmmTMB(sqrt(WORMS) ~ COPPER*DIST + (DIST|PLATE),
+                            dispformula = ~COPPER*DIST, 
+                            data = copper,
+                            family = gaussian(), 
+                            REML = TRUE,
+                            control=glmmTMBControl(optimizer=optim,
+                                                  optArgs = list(method = 'BFGS'))
+                            )
+AICc(copper.glmmTMB2a,  copper.glmmTMB2b)
+```
+
+**Conclusions:**
+
+- use the simpler random structure.
+
+## log-normal (ish) {.tabset .tabset-pills}
+
+### random structure
+
+```{r fitModel1b, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB3a <- glmmTMB(WORMSp ~ COPPER*DIST + (1|PLATE),
+                            dispformula = ~COPPER*DIST, 
+                            data = copper,
+                            family = gaussian(link='log'), 
+                            REML=TRUE)
+copper.glmmTMB3b <- glmmTMB(WORMSp ~ COPPER*DIST + (DIST|PLATE),
+                            dispformula = ~COPPER*DIST, 
+                            data = copper,
+                            family = gaussian(link='log'), 
+                            REML=TRUE,
+                            control=glmmTMBControl(optimizer=optim,
+                                                   optArgs = list(method = 'BFGS'))
+                            )
+AICc(copper.glmmTMB3a,  copper.glmmTMB3b)
+```
+
+**Conclusions:**
+
+- use the simpler random structure.
+
+## gamma {.tabset .tabset-pills}
+
+### random structure
+
+```{r fitModel2b, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB4a <- glmmTMB(WORMSp ~ COPPER*DIST + (1|PLATE),
+                            dispformula = ~COPPER*DIST, 
+                            data = copper,
+                            family = Gamma(link = 'log'),
+                            REML = TRUE)
+copper.glmmTMB4b <- glmmTMB(WORMSp ~ COPPER*DIST + (DIST|PLATE),
+                            dispformula = ~COPPER*DIST, 
+                            data = copper,
+                            family = Gamma(link = 'log'),
+                            REML = TRUE,
+                            control=glmmTMBControl(optimizer=optim,
+                                                   optArgs = list(method = 'BFGS'))
+                            )
+AICc(copper.glmmTMB4a,  copper.glmmTMB4b)
+```
+
+**Conclusions:**
+
+- use the simpler random structure as the model with the more complex random
+  structure did not converge.
+
+## Tweedie {.tabset .tabset-pills}
+
+### random structure
+
+```{r fitModel3b, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
+copper.glmmTMB5a <- glmmTMB(WORMS ~ COPPER*DIST + (1|PLATE),
+                             dispformula = ~COPPER*DIST, 
+                            data = copper,
+                            family = tweedie(link='log'), 
+                           REML = TRUE)
+copper.glmmTMB5b <- glmmTMB(WORMS ~ COPPER*DIST + (DIST|PLATE),
+                             dispformula = ~COPPER*DIST, 
+                            data = copper,
+                            family = tweedie(link='log'), 
+                           REML = TRUE)
+AICc(copper.glmmTMB5a,  copper.glmmTMB5b) 
+```
+
+**Conclusions:**
+
+- use the simpler random structure as the model with the more complex random
+  structure did not converge.
+
+## hurdle-gamma {.tabset .tabset-pills}
+
+### random structure
+
+```{r fitModel3bb, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
+copper.glmmTMB6a <- glmmTMB(WORMS ~ COPPER*DIST + (1|PLATE),
+                            zi = ~1, 
+                            dispformula = ~ COPPER*DIST,
+                            data=copper,
+                            family=ziGamma(link='log'), 
+                            REML = TRUE)
+copper.glmmTMB6b <- glmmTMB(WORMS ~ COPPER*DIST + (DIST|PLATE),
+                            zi = ~1, 
+                            dispformula = ~ COPPER*DIST,
+                            data=copper,
+                            family=ziGamma(link='log'), 
+                            REML = TRUE,
+                            control=glmmTMBControl(optimizer=optim,
+                                                   optArgs = list(method = 'BFGS'))
+                            )
+
+AICc(copper.glmmTMB6a,  copper.glmmTMB6b) 
+```
+
+**Conclusions:**
+
+- use the simpler random structure as the model with the more complex random
+  structure did not converge.
+
+
+</div>
+
+# Model validation {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## Gaussian {.tabset .tabset-pills}
+
+### plot_model
+
+```{r validation4a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7, message=FALSE, warning=FALSE}
+plot_model(copper.glmmTMB1a,  type='diag')[-2] %>% plot_grid
+```
+
+**Conclusions:**
+
+- these diagnostics don't look all that great
+- the Q-Q normal plot deviates substantially from a straight line
+- there is a bit of a trend in the residual plot
+
+
+### Performance model checking
+
+```{r validation4b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+copper.glmmTMB1a %>% performance::check_model()
+```
+
+**Conclusions:**
+
+- these diagnostics don't look all that great
+- the Q-Q normal plot deviates substantially from a straight line
+- there is a bit of a trend in the residual plot
+
+It is also possible to predict which modelling family would be the most suitable
+for the data.  This can be attempted via an experimental routine in the
+`performance` package that uses random forests to classify a range of possible
+distributions.
+
+```{r validation4c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+copper.glmmTMB1a %>% performance::check_distribution()
+```
+
+**Conclusions:**
+
+- in this case, it proposes the Tweedie distribution - which we have also attempted 
+
+
+### DHARMa residuals
+
+```{r validation4d, results='markdown', eval=TRUE, error=TRUE,hidden=TRUE, fig.width=7, fig.height=5, cache=FALSE, message=FALSE, warning=FALSE}
+copper.resid <- copper.glmmTMB1a %>% simulateResiduals(plot=TRUE, integerResponse = TRUE)  
+```
+
+**Conclusions:**
+
+- most of these diagnostics seem reasonable
+- there is some trends in the lower quantiles of the residual plot
+
+
+## sqrt (Gaussian) {.tabset .tabset-pills}
+
+### plot_model
+
+```{r validation5a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7, message=FALSE, warning=FALSE}
+plot_model(copper.glmmTMB2a, type='diag')[-2] %>% plot_grid()
+```
+
+**Conclusions:**
+
+- although the residuals look fine, there is an issue with the Q-Q plot
+
+
+### Performance model checking
+
+```{r validation5b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+copper.glmmTMB2a %>% performance::check_model()
+```
+
+**Conclusions:**
+
+- although the residuals look fine, there is an issue with the Q-Q plot
+
+It is also possible to predict which modelling family would be the most suitable
+for the data.  This can be attempted via an experimental routine in the
+`performance` package that uses random forests to classify a range of possible
+distributions.
+
+```{r validation5c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+copper.glmmTMB2a %>% performance::check_distribution()
+```
+
+**Conclusions:**
+
+- in this case, it proposes the Tweedie distribution - which we have also attempted 
+
+
+### DHARMa residuals
+
+```{r validation5d, results='markdown', eval=TRUE, error=TRUE,hidden=TRUE, fig.width=7, fig.height=5, cache=FALSE, message=FALSE, warning=FALSE}
+copper.resid <- copper.glmmTMB2a %>% simulateResiduals(plot=TRUE, integerResponse = FALSE)  
+```
+
+**Conclusions:**
+
+- all diagnostics seem reasonable except that there is evidence of an issue with dispersion
+
+## log-normal (ish) {.tabset .tabset-pills}
+
+### plot_model
+
+```{r validation1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7, message=FALSE, warning=FALSE}
+plot_model(copper.glmmTMB3a,  type='diag')[-2] %>% plot_grid
+```
+
+**Conclusions:**
+
+- these diagnostics look reasonable
+
+
+### Performance model checking
+
+```{r validation1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+copper.glmmTMB3a %>% performance::check_model()
+```
+
+**Conclusions:**
+
+- most of these diagnostics seem reasonable
+
+It is also possible to predict which modelling family would be the most suitable
+for the data.  This can be attempted via an experimental routine in the
+`performance` package that uses random forests to classify a range of possible
+distributions.
+
+```{r validation1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+copper.glmmTMB3a %>% performance::check_distribution()
+```
+
+**Conclusions:**
+
+- in this case, it proposes the Tweedie distribution - which we have also attempted 
+
+
+### DHARMa residuals
+
+```{r validation1d, results='markdown', eval=TRUE, error=TRUE,hidden=TRUE, fig.width=7, fig.height=5, cache=FALSE, message=FALSE, warning=FALSE}
+copper.resid <- copper.glmmTMB3a %>% simulateResiduals(plot=TRUE, integerResponse = FALSE)  
+```
+
+**Conclusions:**
+
+- all diagnostics seem reasonable
+
+
+## gamma {.tabset .tabset-pills}
+
+### plot_model
+
+```{r validation2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7, message=FALSE, warning=FALSE}
+plot_model(copper.glmmTMB4a,  type='diag')[-2] %>% plot_grid
+```
+
+**Conclusions:**
+
+- these diagnostics look reasonable
+
+
+### Performance model checking
+
+```{r validation2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+copper.glmmTMB4a %>% performance::check_model()
+```
+
+**Conclusions:**
+
+- most of these diagnostics seem reasonable
+
+It is also possible to predict which modelling family would be the most suitable
+for the data.  This can be attempted via an experimental routine in the
+`performance` package that uses random forests to classify a range of possible
+distributions.
+
+```{r validation2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+copper.glmmTMB4a %>% performance::check_distribution()
+```
+
+**Conclusions:**
+
+- in this case, it proposes the Tweedie distribution - which we have also attempted 
+
+
+### DHARMa residuals
+
+```{r validation2d, results='markdown', eval=TRUE, error=TRUE,hidden=TRUE, fig.width=7, fig.height=5, cache=FALSE, message=FALSE, warning=FALSE}
+copper.resid <- copper.glmmTMB4a %>% simulateResiduals(  plot=TRUE, integerResponse = TRUE)  
+```
+
+**Conclusions:**
+
+- the gamma model has not fit at all well
+
+## Tweedie {.tabset .tabset-pills}
+
+### plot_model
+
+```{r validation3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7, message=FALSE, warning=FALSE}
+plot_model(copper.glmmTMB5a,  type='diag')[-2] %>% plot_grid
+```
+
+**Conclusions:**
+
+- these diagnostics look reasonable
+
+
+### Performance model checking
+
+```{r validation3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+copper.glmmTMB5a %>% performance::check_model()
+```
+
+**Conclusions:**
+
+- most of these diagnostics seem reasonable
+
+It is also possible to predict which modelling family would be the most suitable
+for the data.  This can be attempted via an experimental routine in the
+`performance` package that uses random forests to classify a range of possible
+distributions.
+
+```{r validation3c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+copper.glmmTMB5a %>% performance::check_distribution()
+```
+ 
+**Conclusions:**
+
+- in this case, it proposes the Tweedie distribution - which we have also attempted 
+
+
+### DHARMa residuals
+
+```{r validation3d, results='markdown', eval=TRUE, error=TRUE,hidden=TRUE, fig.width=7, fig.height=5, cache=FALSE, message=FALSE, warning=FALSE}
+copper.resid <- copper.glmmTMB5a %>% simulateResiduals(plot=TRUE, integerResponse = TRUE)
+```
+
+**Conclusions:**
+
+- the Tweedie model seems not to be a great fit. 
+
+## hurdle-gamma {.tabset .tabset-pills}
+
+### DHARMa residuals
+
+```{r validation3e, results='markdown', eval=TRUE, error=TRUE,hidden=TRUE, fig.width=7, fig.height=5, cache=FALSE, message=FALSE, warning=FALSE}
+copper.resid <- copper.glmmTMB6a %>% simulateResiduals(  plot=TRUE, integerResponse = TRUE)
+```
+
+**Conclusions:**
+
+- the hurdle-gamma model seems not to be a great fit. 
+ 
+# {-}
+
+**Conclusions:**
+
+- the log-normal (like) model seems to fit the data bast.
+ 
+</div> 
+
+# Partial plots {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## Gaussian {.tabset .tabset-pills}
+
+### plot_model
+
+```{r partialPlot4a, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB1a %>% plot_model(type='eff',  terms=c('DIST', 'COPPER'))
+```
+
+**Conclusions:**
+
+- it is alarming that the confidence intervals for density in the Week 2,
+  Distance 1 group for this model is less than 0
+  
+### allEffects
+
+```{r partialPlot4b, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB1a %>% allEffects() %>% plot(multiline=TRUE, ci.style='bars')
+```
+**Conclusions:**
+
+- it is alarming that the confidence intervals for density in the Week 2,
+  Distance 1 group for this model is less than 0
+
+### ggpredict
+
+```{r partialPlot4c, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB1a %>% ggpredict(c('DIST', 'COPPER')) %>% plot
+```
+**Conclusions:**
+
+- it is alarming that the confidence intervals for density in the Week 2,
+  Distance 1 group for this model is less than 0
+
+### ggemmeans
+
+```{r partialPlot4d, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB1a %>% ggemmeans(~DIST+COPPER) %>% plot
+```
+**Conclusions:**
+
+- it is alarming that the confidence intervals for density in the Week 2,
+  Distance 1 group for this model is less than 0
+
+## sqrt (gaussian) {.tabset .tabset-pills}
+
+### plot_model
+
+```{r partialPlot5a, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB2a %>% plot_model(type='eff',  terms=c('DIST', 'COPPER'))
+```
+
+**Conclusions:**
+
+- these predictions (and confidence intervals) are on a square-root scale.
+- it is not sensible to back-transform from this scale when there are a mixture
+  of positive and negative values (since the square of a negative is positive)
+  because the order of the data could be changed
+- notice that the `Week 2` `Dist 1` lower confidence interval extends
+  below 0, if we were to back-transform the negatives, they will
+  become positive and distort the interval
+
+### allEffects
+
+```{r partialPlot5b, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB2a %>% allEffects() %>% plot(multiline=TRUE, ci.style='bars')
+```
+
+**Conclusions:**
+
+- these predictions (and confidence intervals) are on a square-root scale.
+- it is not sensible to back-transform from this scale when there are a mixture
+  of positive and negative values (since the square of a negative is positive)
+  because the order of the data could be changed
+- notice that the `Week 2` `Dist 1` lower confidence interval extends
+  below 0, if we were to back-transform the negatives, they will
+  become positive and distort the interval
+
+### ggpredict
+
+```{r partialPlot5c, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB2a %>% ggpredict(c('DIST', 'COPPER')) %>% plot
+```
+
+**Conclusions:**
+
+- these predictions (and confidence intervals) are on the response scale.
+- notice that the `Week 2` `Dist 1` lower confidence interval have
+  been distorted.
+
+### ggemmeans
+
+```{r partialPlot5d, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB2a %>% ggemmeans(~DIST+COPPER) %>% plot
+```
+
+**Conclusions:**
+
+- these predictions (and confidence intervals) are on a square-root scale.
+- it is not sensible to back-transform from this scale when there are a mixture
+  of positive and negative values (since the square of a negative is positive)
+  because the order of the data could be changed
+- notice that the `Week 2` `Dist 1` lower confidence interval have
+  been distorted.
+
+## log-normal (like) {.tabset .tabset-pills}
+
+### plot_model
+
+```{r partialPlot1a, results='markdown', eval=TRUE, hidden=TRUE}
+plot_model(copper.glmmTMB3a,  type='eff',  terms=c('DIST', 'COPPER'))
+```
+
+### allEffects
+
+```{r partialPlot1b, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB3a %>% allEffects() %>%  plot(multiline=TRUE, ci.style='bars')
+copper.glmmTMB3a %>% allEffects(transformation=NULL) %>% plot(multiline=TRUE, ci.style='bars')
+```
+
+### ggpredict
+
+```{r partialPlot1c, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB3a %>% ggpredict(c('DIST', 'COPPER')) %>% plot
+```
+
+### ggemmeans
+
+```{r partialPlot1d, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB3a %>% ggemmeans(~DIST+COPPER) %>% plot
+```
+
+## gamma {.tabset .tabset-pills}
+
+### plot_model
+
+```{r partialPlot2a, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB4a %>% plot_model(type='eff',  terms=c('DIST', 'COPPER'))
+```
+
+### allEffects
+
+```{r partialPlot2b, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB4a %>%allEffects() %>% plot(multiline=TRUE, ci.style='bars')
+copper.glmmTMB4a %>% allEffects(transformation=NULL) %>% plot(multiline=TRUE, ci.style='bars')
+```
+
+### ggpredict
+
+```{r partialPlot2c, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB4a %>% ggpredict(c('DIST', 'COPPER')) %>% plot
+```
+
+### ggemmeans
+
+```{r partialPlot2d, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB4a %>% ggemmeans(~DIST+COPPER) %>% plot
+```
+
+## Tweedie {.tabset .tabset-pills}
+
+### plot_model
+
+```{r partialPlot3a, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB5a %>% plot_model(type='eff',  terms=c('DIST', 'COPPER'))
+```
+
+### allEffects
+
+```{r partialPlot3b, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB5a %>% allEffects() %>% plot(multiline=TRUE, ci.style='bars')
+copper.glmmTMB5a %>% allEffects(transformation=NULL) %>% plot(multiline=TRUE, ci.style='bars')
+```
+
+### ggpredict
+
+```{r partialPlot3c, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB5a %>% ggpredict(c('DIST', 'COPPER')) %>% plot
+```
+
+### ggemmeans
+
+```{r partialPlot3d, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB5a %>% ggemmeans(~DIST+COPPER) %>% plot
+```
+
+</div>
+
+# Model Investigation / hypothesis testing {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## gaussian {.tabset .tabset-pills}
+
+### summary
+
+```{r summary4a, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB1a %>% summary()
+```
+
+```{r summary4b, results='markdown', eval=TRUE, echo=FALSE,hidden=TRUE}
+copper.tidy <- copper.glmmTMB1a %>% tidy()
+```
+
+**Conclusions:**
+
+- as the diagnostics for this model were not very encouraging, we will largely
+  ignore these output, they are included just for comparison.
+
+### tidy
+
+```{r summary4c, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB1a %>% tidy(conf.int=TRUE)
+copper.glmmTMB1a %>% tidy(conf.int=TRUE) %>% kable
+```
+
+**Conclusions:**
+
+- as the diagnostics for this model were not very encouraging, we will largely
+  ignore these output, they are included just for comparison.
+
+### tab_model
+
+```{r summary4d, results='markdown', eval=TRUE, hidden=TRUE}
+# warning this is only appropriate for html output
+copper.glmmTMB1a %>% sjPlot::tab_model(show.se=TRUE, show.aic=TRUE)
+```
+
+**Conclusions:**
+
+- as the diagnostics for this model were not very encouraging, we will largely
+  ignore these output, they are included just for comparison.
+
+## sqrt (gaussian) {.tabset .tabset-pills}
+
+### summary
+
+```{r summary5a, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB2a %>% summary()
+```
+
+```{r summary5b, results='markdown', eval=TRUE, echo=FALSE,hidden=TRUE}
+copper.tidy <- copper.glmmTMB2a %>% tidy()
+```
+
+**Conclusions:**
+
+- as the diagnostics for this model were not very encouraging, we will largely
+  ignore these output, they are included just for comparison.
+
+### tidy
+
+```{r summary5c, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB2a %>% tidy(conf.int=TRUE)
+copper.glmmTMB2a %>% tidy(conf.int=TRUE) %>% kable
+```
+
+**Conclusions:**
+
+- as the diagnostics for this model were not very encouraging, we will largely
+  ignore these output, they are included just for comparison.
+
+### tab_model
+
+```{r summary5d, results='markdown', eval=TRUE, hidden=TRUE}
+# warning this is only appropriate for html output
+copper.glmmTMB2a %>% sjPlot::tab_model(show.se=TRUE, show.aic=TRUE)
+```
+
+**Conclusions:**
+
+- as the diagnostics for this model were not very encouraging, we will largely
+  ignore these output, they are included just for comparison.
+
+## log-normal (like) {.tabset .tabset-pills}
+
+### summary
+
+```{r summary1a, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB3a %>% summary()
+```
+
+```{r summary1b, results='markdown', eval=TRUE, echo=FALSE,hidden=TRUE}
+copper.tidy <- copper.glmmTMB3a %>% tidy()
+```
+
+**Conclusions:**
+
+- the density of worms in the control copper treatment within distance 1 on the
+  plates was `r round(as.numeric(copper.tidy[1, 5]), 2)` (on a log scale) and 
+  `r round(exp(as.numeric(copper.tidy[1, 5])), 2)` (on the response scale).
+- the density of worms in the Week 1 copper treatment within distance 1 is on
+  average, `r round(as.numeric(copper.tidy[2, 5]), 2)` less (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[2, 5])), 2)` fold less (on the response
+  scale) than within the control copper treatment.  This equates to a 
+  `r round(100*(1-exp(as.numeric(copper.tidy[2, 5]))), 2)`% decline.
+- the density of worms in the Week 2 copper treatment within distance 1 is on
+  average, `r round(as.numeric(copper.tidy[3, 5]), 2)` less (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[3, 5])), 2)` fold less (on the response
+  scale) than within the control copper treatment.  This equates to a 
+  `r round(100*(1-exp(as.numeric(copper.tidy[3, 5]))), 2)`% decline.
+- the density of worms in the control copper treatment within distance 2 is on
+  average, `r round(as.numeric(copper.tidy[4, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[4, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[4, 5]))-1), 2)`% increase.
+- the density of worms in the control copper treatment within distance 3 is on
+  average, `r round(as.numeric(copper.tidy[5, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[5, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[5, 5]))-1), 2)`% increase.
+- the density of worms in the control copper treatment within distance 4 is on
+  average, `r round(as.numeric(copper.tidy[6, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[6, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[6, 5]))-1), 2)`% increase.
+ - the density of worms in the Week 2 copper treatment at distance 2 is on
+   average `r round(as.numeric(copper.tidy[7, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 2 treatments were purely additive.
+ - the density of worms in the Week 2 copper treatment at distance 3 is on
+   average `r round(as.numeric(copper.tidy[9, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 3 treatments were purely additive.
+ - the density of worms in the Week 2 copper treatment at distance 4 is on
+   average `r round(as.numeric(copper.tidy[11, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 4 treatments were purely additive.
+ - hence there is evidence of an interaction between the copper treatment and
+   the distance.
+ - the parameter estimates (and associated hypothesis tests) provide an
+   indication of which effect dispersion parameters
+   (variance) differed the most from the typical.  These were:
+   - Week 1/Distance 1 vs Control/Distance 1
+   - Control/Distance 4 vs Control/Distance 1
+   - Week 1/Distance 3 interaction
+   - Week 1/Distance 4 interaction
+   
+   
+### tidy
+
+```{r summary1c, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB3a %>% tidy(  conf.int=TRUE)
+## or on the response scale
+copper.glmmTMB3a %>% tidy(conf.int=TRUE, exponentiate = TRUE)
+copper.glmmTMB3a %>% tidy(conf.int=TRUE, exponentiate = TRUE) %>% kable
+```
+
+**Conclusions:**
+
+- the density of worms in the control copper treatment within distance 1 on the
+  plates was `r round(as.numeric(copper.tidy[1, 5]), 2)` (on a log scale) and 
+  `r round(exp(as.numeric(copper.tidy[1, 5])), 2)` (on the response scale).
+- the density of worms in the Week 1 copper treatment within distance 1 is on
+  average, `r round(as.numeric(copper.tidy[2, 5]), 2)` less (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[2, 5])), 2)` fold less (on the response
+  scale) than within the control copper treatment.  This equates to a 
+  `r round(100*(1-exp(as.numeric(copper.tidy[2, 5]))), 2)`% decline.
+- the density of worms in the Week 2 copper treatment within distance 1 is on
+  average, `r round(as.numeric(copper.tidy[3, 5]), 2)` less (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[3, 5])), 2)` fold less (on the response
+  scale) than within the control copper treatment.  This equates to a 
+  `r round(100*(1-exp(as.numeric(copper.tidy[3, 5]))), 2)`% decline.
+- the density of worms in the control copper treatment within distance 2 is on
+  average, `r round(as.numeric(copper.tidy[4, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[4, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[4, 5]))-1), 2)`% increase.
+- the density of worms in the control copper treatment within distance 3 is on
+  average, `r round(as.numeric(copper.tidy[5, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[5, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[5, 5]))-1), 2)`% increase.
+- the density of worms in the control copper treatment within distance 4 is on
+  average, `r round(as.numeric(copper.tidy[6, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[6, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[6, 5]))-1), 2)`% increase.
+ - the density of worms in the Week 2 copper treatment at distance 2 is on
+   average `r round(as.numeric(copper.tidy[7, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 2 treatments were purely additive.
+ - the density of worms in the Week 2 copper treatment at distance 3 is on
+   average `r round(as.numeric(copper.tidy[9, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 3 treatments were purely additive.
+ - the density of worms in the Week 2 copper treatment at distance 4 is on
+   average `r round(as.numeric(copper.tidy[11, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 4 treatments were purely additive.
+ - hence there is evidence of an interaction between the copper treatment and
+   the distance.
+ - the parameter estimates (and associated hypothesis tests) provide an
+   indication of which effect dispersion parameters
+   (variance) differed the most from the typical.  These were:
+   - Week 1/Distance 1 vs Control/Distance 1
+   - Control/Distance 4 vs Control/Distance 1
+   - Week 1/Distance 3 interaction
+   - Week 1/Distance 4 interaction
+   
+### tab_model
+
+```{r summary1d, results='markdown', eval=TRUE, hidden=TRUE}
+# warning this is only appropriate for html output
+copper.glmmTMB3a %>% sjPlot::tab_model(show.se=TRUE, show.aic=TRUE)
+```
+
+## gamma {.tabset .tabset-pills}
+
+### summary
+
+```{r summary2a, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB4a %>% summary()
+```
+
+```{r summary2b, results='markdown', eval=TRUE, echo=FALSE,hidden=TRUE}
+copper.tidy <- copper.glmmTMB4a %>% tidy()
+```
+
+**Conclusions:**
+
+- the density of worms in the control copper treatment within distance 1 on the
+  plates was `r round(as.numeric(copper.tidy[1, 5]), 2)` (on a log scale) and 
+  `r round(exp(as.numeric(copper.tidy[1, 5])), 2)` (on the response scale).
+- the density of worms in the Week 1 copper treatment within distance 1 is on
+  average, `r round(as.numeric(copper.tidy[2, 5]), 2)` less (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[2, 5])), 2)` fold less (on the response
+  scale) than within the control copper treatment.  This equates to a 
+  `r round(100*(1-exp(as.numeric(copper.tidy[2, 5]))), 2)`% decline.
+- the density of worms in the Week 2 copper treatment within distance 1 is on
+  average, `r round(as.numeric(copper.tidy[3, 5]), 2)` less (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[3, 5])), 2)` fold less (on the response
+  scale) than within the control copper treatment.  This equates to a 
+  `r round(100*(1-exp(as.numeric(copper.tidy[3, 5]))), 2)`% decline.
+- the density of worms in the control copper treatment within distance 2 is on
+  average, `r round(as.numeric(copper.tidy[4, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[4, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[4, 5]))-1), 2)`% increase.
+- the density of worms in the control copper treatment within distance 3 is on
+  average, `r round(as.numeric(copper.tidy[5, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[5, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[5, 5]))-1), 2)`% increase.
+- the density of worms in the control copper treatment within distance 4 is on
+  average, `r round(as.numeric(copper.tidy[6, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[6, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[6, 5]))-1), 2)`% increase.
+ - the density of worms in the Week 2 copper treatment at distance 2 is on
+   average `r round(as.numeric(copper.tidy[7, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 2 treatments were purely additive.
+ - the density of worms in the Week 2 copper treatment at distance 3 is on
+   average `r round(as.numeric(copper.tidy[9, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 3 treatments were purely additive.
+ - the density of worms in the Week 2 copper treatment at distance 4 is on
+   average `r round(as.numeric(copper.tidy[11, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 4 treatments were purely additive.
+ - hence there is evidence of an interaction between the copper treatment and
+   the distance.
+ - the parameter estimates (and associated hypothesis tests) provide an
+   indication of which effect dispersion parameters
+   (variance) differed the most from the typical.  These were:
+   - Week 1/Distance 1 vs Control/Distance 1
+   - Control/Distance 4 vs Control/Distance 1
+   - Week 1/Distance 3 interaction
+   - Week 1/Distance 4 interaction
+   - Week 2/Distance 3 interaction
+   - Week 2/Distance 4 interaction
+   
+### tidy
+
+```{r summary2c, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB4a %>% tidy(conf.int=TRUE)
+## or on the response scale
+copper.glmmTMB4a %>% tidy(conf.int=TRUE, exponentiate = TRUE)
+copper.glmmTMB4a %>% tidy(conf.int=TRUE, exponentiate = TRUE) %>% kable
+```
+
+**Conclusions:**
+
+- the density of worms in the control copper treatment within distance 1 on the
+  plates was `r round(as.numeric(copper.tidy[1, 5]), 2)` (on a log scale) and 
+  `r round(exp(as.numeric(copper.tidy[1, 5])), 2)` (on the response scale).
+- the density of worms in the Week 1 copper treatment within distance 1 is on
+  average, `r round(as.numeric(copper.tidy[2, 5]), 2)` less (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[2, 5])), 2)` fold less (on the response
+  scale) than within the control copper treatment.  This equates to a 
+  `r round(100*(1-exp(as.numeric(copper.tidy[2, 5]))), 2)`% decline.
+- the density of worms in the Week 2 copper treatment within distance 1 is on
+  average, `r round(as.numeric(copper.tidy[3, 5]), 2)` less (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[3, 5])), 2)` fold less (on the response
+  scale) than within the control copper treatment.  This equates to a 
+  `r round(100*(1-exp(as.numeric(copper.tidy[3, 5]))), 2)`% decline.
+- the density of worms in the control copper treatment within distance 2 is on
+  average, `r round(as.numeric(copper.tidy[4, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[4, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[4, 5]))-1), 2)`% increase.
+- the density of worms in the control copper treatment within distance 3 is on
+  average, `r round(as.numeric(copper.tidy[5, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[5, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[5, 5]))-1), 2)`% increase.
+- the density of worms in the control copper treatment within distance 4 is on
+  average, `r round(as.numeric(copper.tidy[6, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[6, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[6, 5]))-1), 2)`% increase.
+ - the density of worms in the Week 2 copper treatment at distance 2 is on
+   average `r round(as.numeric(copper.tidy[7, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 2 treatments were purely additive.
+ - the density of worms in the Week 2 copper treatment at distance 3 is on
+   average `r round(as.numeric(copper.tidy[9, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 3 treatments were purely additive.
+ - the density of worms in the Week 2 copper treatment at distance 4 is on
+   average `r round(as.numeric(copper.tidy[11, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 4 treatments were purely additive.
+ - hence there is evidence of an interaction between the copper treatment and
+   the distance.
+ - the parameter estimates (and associated hypothesis tests) provide an
+   indication of which effect dispersion parameters
+   (variance) differed the most from the typical.  These were:
+   - Week 1/Distance 1 vs Control/Distance 1
+   - Control/Distance 4 vs Control/Distance 1
+   - Week 1/Distance 3 interaction
+   - Week 1/Distance 4 interaction
+   - Week 2/Distance 3 interaction
+   - Week 2/Distance 4 interaction
+   
+### tab_model
+
+```{r summary2d, results='markdown', eval=TRUE, hidden=TRUE}
+# warning this is only appropriate for html output
+copper.glmmTMB4a %>% sjPlot::tab_model(show.se=TRUE, show.aic=TRUE)
+```
+
+## Tweedie {.tabset .tabset-pills}
+
+### summary
+
+```{r summary3a, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB5a %>% summary()
+```
+
+```{r summary3b, results='markdown', eval=TRUE, echo=FALSE,hidden=TRUE}
+copper.tidy <- copper.glmmTMB5a %>% tidy()
+```
+
+**Conclusions:**
+
+- the density of worms in the control copper treatment within distance 1 on the
+  plates was `r round(as.numeric(copper.tidy[1, 5]), 2)` (on a log scale) and 
+  `r round(exp(as.numeric(copper.tidy[1, 5])), 2)` (on the response scale).
+- the density of worms in the Week 1 copper treatment within distance 1 is on
+  average, `r round(as.numeric(copper.tidy[2, 5]), 2)` less (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[2, 5])), 2)` fold less (on the response
+  scale) than within the control copper treatment.  This equates to a 
+  `r round(100*(1-exp(as.numeric(copper.tidy[2, 5]))), 2)`% decline.
+- the density of worms in the Week 2 copper treatment within distance 1 is on
+  average, `r round(as.numeric(copper.tidy[3, 5]), 2)` less (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[3, 5])), 2)` fold less (on the response
+  scale) than within the control copper treatment.  This equates to a 
+  `r round(100*(1-exp(as.numeric(copper.tidy[3, 5]))), 2)`% decline.
+- the density of worms in the control copper treatment within distance 2 is on
+  average, `r round(as.numeric(copper.tidy[4, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[4, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[4, 5]))-1), 2)`% increase.
+- the density of worms in the control copper treatment within distance 3 is on
+  average, `r round(as.numeric(copper.tidy[5, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[5, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[5, 5]))-1), 2)`% increase.
+- the density of worms in the control copper treatment within distance 4 is on
+  average, `r round(as.numeric(copper.tidy[6, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[6, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[6, 5]))-1), 2)`% increase.
+ - the density of worms in the Week 2 copper treatment at distance 2 is on
+   average `r round(as.numeric(copper.tidy[7, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 2 treatments were purely additive.
+ - the density of worms in the Week 2 copper treatment at distance 3 is on
+   average `r round(as.numeric(copper.tidy[9, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 3 treatments were purely additive.
+ - the density of worms in the Week 2 copper treatment at distance 4 is on
+   average `r round(as.numeric(copper.tidy[11, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 4 treatments were purely additive.
+ - hence there is evidence of an interaction between the copper treatment and
+   the distance.
+ - the parameter estimates (and associated hypothesis tests) provide an
+   indication of which effect dispersion parameters
+   (variance) differed the most from the typical.  These were:
+   - Week 1/Distance 1 vs Control/Distance 1
+   - Control/Distance 4 vs Control/Distance 1
+   - Week 1/Distance 3 interaction
+   - Week 1/Distance 4 interaction
+   - Week 2/Distance 3 interaction
+   - Week 2/Distance 4 interaction
+   
+### tidy
+
+```{r summary3c, results='markdown', eval=TRUE, hidden=TRUE}
+copper.glmmTMB5a %>% tidy(conf.int=FALSE)
+## or on the response scale
+copper.glmmTMB5a %>% tidy(conf.int=FALSE, exponentiate = TRUE)
+copper.glmmTMB5a %>% tidy(conf.int=FALSE, exponentiate = TRUE) %>% kable
+```
+
+**Conclusions:**
+
+- the density of worms in the control copper treatment within distance 1 on the
+  plates was `r round(as.numeric(copper.tidy[1, 5]), 2)` (on a log scale) and 
+  `r round(exp(as.numeric(copper.tidy[1, 5])), 2)` (on the response scale).
+- the density of worms in the Week 1 copper treatment within distance 1 is on
+  average, `r round(as.numeric(copper.tidy[2, 5]), 2)` less (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[2, 5])), 2)` fold less (on the response
+  scale) than within the control copper treatment.  This equates to a 
+  `r round(100*(1-exp(as.numeric(copper.tidy[2, 5]))), 2)`% decline.
+- the density of worms in the Week 2 copper treatment within distance 1 is on
+  average, `r round(as.numeric(copper.tidy[3, 5]), 2)` less (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[3, 5])), 2)` fold less (on the response
+  scale) than within the control copper treatment.  This equates to a 
+  `r round(100*(1-exp(as.numeric(copper.tidy[3, 5]))), 2)`% decline.
+- the density of worms in the control copper treatment within distance 2 is on
+  average, `r round(as.numeric(copper.tidy[4, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[4, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[4, 5]))-1), 2)`% increase.
+- the density of worms in the control copper treatment within distance 3 is on
+  average, `r round(as.numeric(copper.tidy[5, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[5, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[5, 5]))-1), 2)`% increase.
+- the density of worms in the control copper treatment within distance 4 is on
+  average, `r round(as.numeric(copper.tidy[6, 5]), 2)` more (log scale) or 
+  `r round(exp(as.numeric(copper.tidy[6, 5])), 2)` fold more (on the response
+  scale) than within distance 1.  This equates to a 
+  `r round(100*(exp(as.numeric(copper.tidy[6, 5]))-1), 2)`% increase.
+ - the density of worms in the Week 2 copper treatment at distance 2 is on
+   average `r round(as.numeric(copper.tidy[7, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 2 treatments were purely additive.
+ - the density of worms in the Week 2 copper treatment at distance 3 is on
+   average `r round(as.numeric(copper.tidy[9, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 3 treatments were purely additive.
+ - the density of worms in the Week 2 copper treatment at distance 4 is on
+   average `r round(as.numeric(copper.tidy[11, 5]), 2)` units (log scale) more than would be
+   expected if the effects of the Week 2 and distance 4 treatments were purely additive.
+ - hence there is evidence of an interaction between the copper treatment and
+   the distance.
+ - the parameter estimates (and associated hypothesis tests) provide an
+   indication of which effect dispersion parameters
+   (variance) differed the most from the typical.  These were:
+   - Week 1/Distance 1 vs Control/Distance 1
+   - Control/Distance 4 vs Control/Distance 1
+   - Week 1/Distance 3 interaction
+   - Week 1/Distance 4 interaction
+   - Week 2/Distance 3 interaction
+   - Week 2/Distance 4 interaction
+   
+### tab_model
+
+```{r summary3d, results='markdown', eval=TRUE, hidden=TRUE}
+# warning this is only appropriate for html output
+copper.glmmTMB5a %>% sjPlot::tab_model(show.se=TRUE, show.aic=TRUE)
+```
+
+</div>
+
+
+# Further analysis {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+The presence of an interaction suggests that the effect of the copper treatment
+is not consistent across the distances and vice verse. We may wish to further
+explore the differences in copper treatments separately for each distance.
+
+
+```{r furtherAnalysis1a, results='markdown', echo=TRUE, eval=TRUE, hidden=TRUE}
+copper.glmmTMB4a %>% emmeans(~COPPER|DIST, type='response') %>% pairs()
+## copper.glmmTMB4a %>% emmeans(~COPPER|DIST, type='response') %>% contrast(method='pairwise')
+```
+
+**Conclusions:**
+
+- we can see that each comparison is significant - the copper treatment does have
+  an effect on worms - both settlement (Week 2) and establishment (Week 1),
+  however the magnitude of the effects decline with distance from the center of
+  the plate.
+
+```{r furtherAnalysis1b, results='markdown', echo=TRUE, eval=TRUE, hidden=TRUE}
+copper.glmmTMB4a %>% emmeans(~DIST|COPPER, type='response') %>% contrast(method='poly')
+## copper.glmmTMB4a %>% emmeans(~DIST|COPPER) %>% regrid() %>% contrast(method='poly')
+```
+
+**Conclusions:**
+
+- for each copper treatment, there is evidence of a linear increase in worm
+  density over distance from the center of the plate.
+- the linear rate of change is greatest for Week 2 treatment and mildest for the
+  control group.
+- the significant increase in worm density with increasing distance from the
+  center of the plate in the control treatment suggests that worms prefer to
+  settle away from the center.
+- this is exacerbated when there is copper in the center of the plate
+  (particularly in the Week 2 treatment) - suggesting that the copper inhibits
+  worm settlement. 
+
+</div>
+
+
+# Summary figures
+
+```{r summaryFigure, results='markdown', echo=TRUE, eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
+newdata <- copper.glmmTMB4a %>%
+    emmeans(~COPPER|DIST, type = 'response') %>%
+    summary(infer=TRUE) %>% 
+    as.data.frame
+
+head(newdata)
+g1 = ggplot(newdata, aes(y=response, x=DIST, fill=COPPER)) +
+    geom_pointrange(aes(ymin=lower.CL, ymax=upper.CL),shape=21,
+                    position=position_dodge(width=0.2)) +
+    theme_bw()
+copper.comp <- copper.glmmTMB4a %>%
+    emmeans(~COPPER|DIST,  type='response') %>%
+    pairs() %>% 
+    ## contrast(method='pairwise') %>%
+    summary(infer=TRUE) %>%
+    as.data.frame                                                                           
+head(copper.comp)
+
+g2 <- ggplot(copper.comp, aes(y = ratio, x = contrast, color = DIST)) +
+    geom_pointrange(aes(ymin = lower.CL, ymax = upper.CL),
+                    position = position_dodge(width = 0.6)) +
+    geom_hline(yintercept = 1) +
+    scale_y_continuous(trans = scales::log2_trans(),  limits = c(0.25, 500)) +
+    coord_flip() +
+    theme_bw()
+
+g1 + g2
+```
+
+# References

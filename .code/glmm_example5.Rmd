@@ -1,0 +1,951 @@
+---
+title: "GLMM example 5"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../public/resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../public/resources/references.bib
+---
+
+```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+```
+
+# Preparations
+ 
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(car)       #for regression diagnostics
+library(broom)     #for tidy output
+library(broom.mixed) #for tidy output
+library(ggfortify) #for model diagnostics
+library(sjPlot)    #for outputs
+library(knitr)     #for kable
+library(effects)   #for partial effects plots
+library(ggeffects) #for effects plots in ggplotjk
+library(emmeans)   #for estimating marginal means
+library(MASS)      #for glm.nb
+library(MuMIn)     #for AICc
+library(tidyverse) #for data wrangling
+library(DHARMa)    #for assessing dispersion etc
+library(glmmTMB)    #for glmmTMB
+library(performance) #for diagnostic plots
+library(see)         #for diagnostic plots
+library(lme4)       #for glmer
+library(glmmTMB)    #for glmmTMB
+```
+
+# Scenario
+
+Some ornithologists were interested in the degree of sibling negotiations in owl
+chicks.  Specifically, they wanted to explore how sibling negotiations were
+affected by feeding satiety and the sex of the parent returning to the nest.
+The ornithologists had accessed to a number of owl nests and were able to count
+(via recording equipment) the number of sibling negotiations (calls) that the
+owl chicks made when the parent returned to the nest.
+
+We could hypothesise that the chicks might call more if they were hungry.  As
+part of the investigation, the researchers were able to provided supplementary
+food.  As such, they were able to manipulate the conditions such that sometimes
+the chicks in a nest would be considered deprived of supplementary food and at
+other times they were satiated.  
+
+As a parent returned, the researchers recorded the number of sibling
+negotiations (calls) along with the sex of the parent.  Since the number of
+calls is likely to be a function of the number of chicks (the more chicks the
+more calls), the researchers also counted the number of siblings in the brood. 
+
+Each nest was measured on multiple occasions.  Hence, we must include the nest
+as a random effect to account for the lack of independence between observations
+on the same set of siblings.
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+owls = read_csv('../public/data/owls.csv', trim_ws=TRUE)
+glimpse(owls)
+```
+
+# Data preparation
+<div class='HIDDEN'>
+
+Let start by declaring the categorical variables and random effect as factors.
+
+```{r dataProcessing, results='markdown', eval=TRUE, hidden=TRUE}
+## Amount of Sibling negotiation (vocalizations when parents are absent)
+## Foot treatment (deprived or satiated
+## Sex of parent
+## Arrival time of parent
+## Nest as random
+## Brood size offset
+owls = owls %>% mutate(Nest =factor(Nest),
+                       FoodTreatment = factor(FoodTreatment),
+                       SexParent = factor(SexParent),
+                       NCalls = SiblingNegotiation)
+```
+</div>
+
+# Exploratory data analysis
+
+<div class='HIDDEN'>
+
+As the response represents counts (the number of calls), it would make sense to
+start by considering a Poisson model.  We could attempt to model the response as
+the number of calls divided by the brood size, but this would result in a
+response that has no natural distribution.
+
+Instead, if we include brood size as an **offset**, it will standardise the
+effects according to brood size (similar to having divided the response by
+brood size), yet retain the Poisson nature of the response.
+
+The effects of offsets, unlike regular covariates, are not estimated.  Rather
+they are assumed to be 1 (on the link scale).  This means that since Poisson
+uses a log link, then the offset should be of a logged version of the brood size.
+
+</div>
+
+Model formula:
+$$
+y_i \sim{} \mathcal{Pois}(\lambda_i)\\
+ln(\lambda_i) =\boldsymbol{\beta} \bf{X_i} + \boldsymbol{\gamma} \bf{Z_i}
+$$
+
+where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of the fixed
+and random effects parameters respectively and $\bf{X}$ is the model matrix
+representing the overall intercept and effects of food treatment, sex of parent,
+arrival time (and various interactions) on the number of sibling negotiations.
+Brood size was also incorporated as an offset.  $\bf{Z}$ represents a cell means
+model matrix for the random intercepts associated with individual nests.
+
+<div class='HIDDEN'>
+
+Perhaps we could start off by exploring the main fixed effects.  To mimic the
+log-link, we will use a log-transformed y axis.  Since there may well be zeros
+(no calls detected), we will use a pseudo log scale).  We will also include the
+raw data (jittered and dodged)
+
+```{r eda1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+ggplot(data = owls, aes(y = NCalls, x = FoodTreatment,  color=SexParent)) +
+  geom_violin() +
+  geom_point()
+ggplot(data = owls, aes(y = NCalls, x = FoodTreatment,  color=SexParent)) +
+  geom_violin() +
+  geom_point(position=position_jitterdodge(jitter.width=0.2, dodge.width=0.9))
+ggplot(data = owls, aes(y = NCalls, x = FoodTreatment,  color=SexParent)) +
+  geom_violin() +
+  geom_point(position=position_jitterdodge(jitter.height=0,  dodge.width=1))+
+  scale_y_continuous(trans=scales::pseudo_log_trans())
+```
+
+Now, a similar plot separated for each nest.
+
+```{r eda2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10}
+ggplot(data=owls) +
+  geom_point(aes(y=NCalls,  x=FoodTreatment,  color=SexParent),  position=position_dodge(0.5)) +
+  facet_wrap(~Nest)
+```
+
+It might also be worth establishing that there is a linear relationship between
+the number of calls and brood size.  Again, we will mimic the use of the log-link
+by transforming the axes.
+
+```{r eda3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=5}
+ggplot(data = owls,aes(y = NCalls, x = BroodSize, color=SexParent)) +
+  geom_point() + 
+  geom_smooth(method='lm') +
+  facet_grid(~FoodTreatment) +
+  scale_y_continuous(trans=scales::pseudo_log_trans()) +
+  scale_x_log10()
+```
+
+</div>
+
+# Fit the model {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## glmer (lme4) {.tabset .tabset-pills}
+
+### random structure
+
+```{r fitModel1b, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
+owls.glmer1 <- glmer(NCalls ~ 1 + offset(log(BroodSize)) + (1|Nest),
+                     data=owls,
+                     family=poisson(link='log'))
+owls.glmer2 <- glmer(NCalls ~ 1 + offset(log(BroodSize)) + (FoodTreatment|Nest),
+                     data=owls,
+                     family=poisson(link='log'))
+owls.glmer3 <- glmer(NCalls ~ 1 + offset(log(BroodSize)) + (SexParent|Nest),
+                     data=owls,
+                     family=poisson(link='log'))
+owls.glmer4 <- glmer(NCalls ~ 1 + offset(log(BroodSize)) + (FoodTreatment*SexParent|Nest),
+                     data=owls,
+                     family=poisson(link='log'))
+
+## owls.glmer1a <- owls.glmer1
+## owls.glmer1b <- update(owls.glmer1a, ~ . - (1|Nest) + (FoodTreatment|Nest))
+## owls.glmer1c <- update(owls.glmer1a, ~ . - (1|Nest) + (SexParent|Nest))
+## owls.glmer1d <- update(owls.glmer1a, ~ . - (1|Nest) + (FoodTreatment*SexParent|Nest))
+## owls.allFit <- allFit(owls.glmer1d)
+## owls.allFit
+## ## Check which of the models are considered valid (OK)
+## is.OK <- sapply(owls.allFit, is, "merMod")
+## is.OK
+## diff_optims.OK <- owls.allFit[is.OK]
+## lapply(diff_optims.OK,function(x) x@optinfo$conv$lme4$messages)
+## owls.glmer1d <- update(owls.glmer1d, control=glmerControl(optimizer='bobyqa'))
+## owls.glmer1c <- update(owls.glmer1c, control=glmerControl(optimizer='bobyqa'))
+## owls.glmer1a <- update(owls.glmer1a, control=glmerControl(optimizer='bobyqa'))
+## owls.glmer1b <- update(owls.glmer1b, control=glmerControl(optimizer='bobyqa'))
+
+AICc(owls.glmer1, owls.glmer2, owls.glmer3, owls.glmer4)
+```
+
+**Conclusions:**
+
+- at this stage, the random slope model in which slopes differ per
+  FoodTreatments and SexParent is the best model.  We will cautiously proceed
+  with this model noting that it may be too complex once we add the fixed
+  effects.
+  
+### fixed structure
+
+```{r fitModel1a, results='markdown', eval=TRUE, hidden=TRUE}
+owls.glmer4a <- update(owls.glmer4, .~. + FoodTreatment*SexParent)
+owls.glmer4a <- update(owls.glmer4, .~. + FoodTreatment*SexParent,
+                       control = glmerControl(optimizer='bobyqa'))
+owls.glmer4b <- update(owls.glmer4, .~. + FoodTreatment+SexParent)
+AICc(owls.glmer4a, owls.glmer4b)
+anova(owls.glmer4a, owls.glmer4b)
+```
+
+**Conclusions:**
+
+- although the AICc for the multiplicative model is not 2 units more and
+  is not significant, it might still be worth including the interaction term.
+
+## glmmTMB (glmmTMB) {.tabset .tabset-pills}
+
+### random structure
+
+```{r fitModel2b, results='markdown', eval=TRUE, hidden=TRUE}
+owls.glmmTMB1 <- glmmTMB(NCalls ~ 1 + offset(log(BroodSize)) + (1|Nest),
+                     data=owls,
+                     family=poisson(link='log'),
+                     REML=TRUE)
+owls.glmmTMB2 <- glmmTMB(NCalls ~ 1 + offset(log(BroodSize)) + (FoodTreatment|Nest),
+                     data=owls,
+                     family=poisson(link='log'))
+owls.glmmTMB3 <- glmmTMB(NCalls ~ 1 + offset(log(BroodSize)) + (SexParent|Nest),
+                     data=owls,
+                     family=poisson(link='log'))
+owls.glmmTMB4 <- glmmTMB(NCalls ~ 1 + offset(log(BroodSize)) + (FoodTreatment*SexParent|Nest),
+                     data=owls,
+                     family=poisson(link='log'))
+ AICc(owls.glmmTMB1, owls.glmmTMB2, owls.glmmTMB3, owls.glmmTMB4)
+
+## owls.glmmTMB1a <- update(owls.glmmTMB1,  REML=TRUE)
+## owls.glmmTMB1b <- update(owls.glmmTMB1a, ~ . - (1|Nest) + (FoodTreatment|Nest))
+## owls.glmmTMB1c <- update(owls.glmmTMB1a, ~ . - (1|Nest) + (SexParent|Nest))
+## owls.glmmTMB1d <- update(owls.glmmTMB1a, ~ . - (1|Nest) + (FoodTreatment*SexParent|Nest))
+
+## AICc(owls.glmmTMB1a, owls.glmmTMB1b, owls.glmmTMB1c, owls.glmmTMB1d)
+```
+
+**Conclusions:**
+
+- at this stage, the random slope model in which slopes differ per
+  FoodTreatments and SexParent is the best model.  We will cautiously proceed
+  with this model noting that it may be too complex once we add the fixed
+  effects.
+  
+
+### fixed structure
+
+```{r fitModel2a, results='markdown', eval=TRUE, hidden=TRUE}
+owls.glmmTMB4a <- update(owls.glmmTMB4, .~. + FoodTreatment*SexParent)
+owls.glmmTMB4b <- update(owls.glmmTMB4, .~. + FoodTreatment+SexParent)
+AICc(owls.glmmTMB4a, owls.glmmTMB4b)
+anova(owls.glmmTMB4a, owls.glmmTMB4b)
+## owls.glmmTMB1 <- glmmTMB(NCalls ~ FoodTreatment*SexParent + offset(log(BroodSize))
+##                          + (1|Nest),  data=owls,
+##                          family=poisson(link='log'), REML=FALSE)
+## owls.glmmTMB2 <- update(owls.glmmTMB1, ~ . - FoodTreatment:SexParent)
+## AICc(owls.glmmTMB1, owls.glmmTMB2)
+## anova(owls.glmmTMB1, owls.glmmTMB2)
+```
+
+**Conclusions:**
+
+- although the AICc for the multiplicative model is not quite 2 units more and
+  is not significant, it might still be worth including the interaction term.
+
+</div>
+
+# Model validation {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## glmer (lme4) {.tabset .tabset-pills}
+
+### plot_model
+
+```{r validation1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7, message=FALSE, warning=FALSE}
+owls.glmer4a %>% plot_model(type='diag')
+```
+
+**Conclusions:**
+
+- these diagnostics look reasonable
+
+### Performance model checking
+
+```{r validation1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+owls.glmer4a %>% performance::check_model()
+```
+
+**Conclusions:**
+
+- most of these diagnostics seem reasonable
+
+It is also possible to predict which modelling family would be the most suitable
+for the data.  This can be attempted via an experimental routine in the
+`performance` package that uses random forests to classify a range of possible
+distributions.
+
+```{r validation1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+owls.glmer4a %>% performance::check_distribution()
+```
+
+**Conclusions:**
+
+- in this case, it proposes the beta-binomial family (which is for
+  over-dispersed binomial models).  This is clearly not appropriate for the
+  current data, so we will ignore the suggestion.
+- nevertheless, it also pointed to a negative binomial model suggesting that
+  their may well be some over-dispersion.
+  
+We can explore over-dispersion more formally:
+
+```{r validation1d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+owls.glmer4a%>% performance::check_overdispersion()
+```
+
+**Conclusions:**
+
+- there is evidence of over-dispersion
+
+Over-dispersion could be caused by numerous factors:
+
+- overly simplistic model that has more variance than the Poisson would expect
+- excessive zeros.  In this case, it is possible that some of the zeros are
+false zeros.  That is, the researchers recorded zero calls when in fact there
+were calls - they just could not be detected (perhaps they were too quiet).
+
+We can explore zero-inflation directly:
+
+```{r validation1e, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+owls.glmer4a %>% performance::check_zeroinflation()
+```
+
+**Conclusions:**
+
+- there does appear to be more zeros that a Poisson would expect
+
+### DHARMa residuals
+
+```{r validation1f, results='markdown', eval=TRUE, error=TRUE,hidden=TRUE, fig.width=7, fig.height=5, cache=FALSE, message=FALSE, warning=FALSE}
+owls.resid <-  owls.glmer4a %>% simulateResiduals(plot=TRUE, integerResponse = TRUE)  
+```
+
+**Conclusions:**
+
+- the model does not appear to be a very good fit
+- the Q-Q plot deviates substantially from a straight line
+- there are outliers
+
+Perhaps we should specifically explore zero-inflation.
+
+```{r validation1g, results='markdown', eval=TRUE, error=TRUE,hidden=TRUE, fig.width=7, fig.height=5, cache=FALSE, message=FALSE, warning=FALSE}
+owls.resid %>% testZeroInflation()  
+```
+
+**Conclusions:**
+
+- there is strong evidence of zero-inflation
+
+<br>
+The data were collected at various times throughout the night.  It is possible
+that this could lead to patterns of dependency that are not already accounted
+for.  For example, perhaps observations that are collected at similar time of
+the night (within a given nest) have more similar residuals than those at very
+different time of the night.  We can explore whether there are any temporal
+autocorrelation patterns.
+
+```{r validation1h, results='markdown', eval=TRUE, error=TRUE,hidden=TRUE, fig.width=7, fig.height=5, cache=FALSE, message=FALSE, warning=FALSE}
+owls.resid %>% testTemporalAutocorrelation(time=owls$ArrivalTime)
+owls.resid1 <- owls.resid %>% recalculateResiduals(group=interaction(owls$ArrivalTime,  owls$Nest),  aggregateBy = mean)
+owls.resid1 %>% testTemporalAutocorrelation(time=unique(owls$ArrivalTime))
+```
+
+**Conclusions:**
+
+- there is no evidence of temporal autocorrelation
+
+## glmmTMB (lme4) {.tabset .tabset-pills}
+
+### plot_model
+
+```{r validation2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=7, message=FALSE, warning=FALSE}
+owls.glmmTMB4a %>% plot_model(type='diag')
+```
+
+**Conclusions:**
+
+- these diagnostics look reasonable
+
+### Performance model checking
+
+```{r validation2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+owls.glmmTMB4a %>% performance::check_model()
+```
+
+**Conclusions:**
+
+- most of these diagnostics seem reasonable
+
+It is also possible to predict which modelling family would be the most suitable
+for the data.  This can be attempted via an experimental routine in the
+`performance` package that uses random forests to classify a range of possible
+distributions.
+
+```{r validation2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+owls.glmmTMB4a %>% performance::check_distribution()
+```
+
+**Conclusions:**
+
+- in this case, it proposes the beta-binomial family (which is for
+  over-dispersed binomial models).  This is clearly not appropriate for the
+  current data, so we will ignore the suggestion.
+- nevertheless, it also pointed to a negative binomial model suggesting that
+  their may well be some over-dispersion.
+  
+We can explore over-dispersion more formally:
+
+```{r validation2d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+owls.glmmTMB4a %>% performance::check_overdispersion()
+```
+
+**Conclusions:**
+
+- there is evidence of over-dispersion
+
+Over-dispersion could be caused by numerous factors:
+
+- overly simplistic model that has more variance than the Poisson would expect
+- excessive zeros.  In this case, it is possible that some of the zeros are
+false zeros.  That is, the researchers recorded zero calls when in fact there
+were calls - they just could not be detected (perhaps they were too quiet).
+
+We can explore zero-inflation directly:
+
+```{r validation2e, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=10, message=FALSE, warning=FALSE}
+performance::check_zeroinflation(owls.glmmTMB4a)
+```
+
+**Conclusions:**
+
+- there does appear to be more zeros that a Poisson would expect
+
+
+### DHARMa residuals
+
+```{r validation2f, results='markdown', eval=TRUE, error=TRUE,hidden=TRUE, fig.width=7, fig.height=5, message=FALSE, warning=FALSE}
+owls.resid <- owls.glmmTMB4a %>% simulateResiduals(plot=TRUE, integerResponse = TRUE)
+```
+
+**Conclusions:**
+
+- the model does not appear to be a very good fit
+- the Q-Q plot deviates substantially from a straight line
+- there are outliers
+
+Perhaps we should specifically explore zero-inflation.
+
+```{r validation2g, results='markdown', eval=TRUE, error=TRUE,hidden=TRUE, fig.width=7, fig.height=5, cache=FALSE, message=FALSE, warning=FALSE}
+owls.resid %>% testZeroInflation()
+```
+
+**Conclusions:**
+
+- there is strong evidence of zero-inflation
+
+<br>
+The data were collected at various times throughout the night.  It is possible
+that this could lead to patterns of dependency that are not already accounted
+for.  For example, perhaps observations that are collected at similar time of
+the night (within a given nest) have more similar residuals than those at very
+different time of the night.  We can explore whether there are any temporal
+autocorrelation patterns.
+
+```{r validation2h, results='markdown', eval=TRUE, error=TRUE,hidden=TRUE, fig.width=7, fig.height=5, cache=FALSE, message=FALSE, warning=FALSE}
+owls.resid %>% testTemporalAutocorrelation(time=owls$ArrivalTime)
+owls.resid1 <- owls.resid %>% recalculateResiduals(group=interaction(owls$ArrivalTime,  owls$Nest),  aggregateBy = mean)=
+owls.resid1 %>% testTemporalAutocorrelation(time=unique(owls$ArrivalTime))
+```
+
+**Conclusions:**
+
+- there is no evidence of temporal autocorrelation
+
+</div>
+
+
+# {-}
+<div class='HIDDEN'>
+
+**Conclusions:**
+
+- there is evidence that the model does not fit that well. It is evidently zero
+  inflated and possibly also over-dispersed.
+- it would seem that a zero-inflated Poisson or even a zero-inflated Negative
+  Binomial would be a sensible next step.
+- zero-inflated models cannot be fit in `glmer()`, so we will proceed with
+`glmmTMB()` only.
+
+</div>
+
+# Model refit and validation {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+**Zero-inflated vs hurdle models**
+
+- zero-inflated models: are a mixture of Bernoulli and Poisson (or negative
+  binomial) distributions to model situations where it is believed that the
+  observed data are the result of two combined processes (a count process that
+  governs how many items there are to count and a Bernoulli process that governs
+  whether the items are detectable).  In this way, zero-inflated models are
+  useful in situations where we believe that some of the zeros are false zeros
+  (recorded as zeros when they should not have been).
+- hurdle models: are for situations where the response itself is thought to be
+  the result of two processes: one that governs whether there is a response and
+  then another that governs the value of the response (must be positive).
+
+## Fit model 1 (Poisson) {.tabset .tabset-pills}
+
+```{r fitModel3a, results='markdown', eval=TRUE, hidden=TRUE}
+owls.glmmTMB5 <- glmmTMB(NCalls ~ FoodTreatment*SexParent + offset(log(BroodSize)) +
+                           (FoodTreatment*SexParent|Nest), 
+                         ziformula=~1,  data=owls,
+                         family=poisson(link='log'),
+                         REML=TRUE)
+#OR
+owls.glmmTMB5 <- update(owls.glmmTMB4a, ziformula=~1)
+```
+
+Model validation
+
+```{r fitModel3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4}
+owls.resid <- owls.glmmTMB5 %>% simulateResiduals(plot=TRUE, integerResponse = TRUE)
+owls.resid %>% testZeroInflation()
+owls.resid %>% testDispersion()
+## owls.glmmTMB5 %>% performance::check_overdispersion()
+owls.resid %>% testUniformity()
+owls.resid %>% testQuantiles()
+owls.resid %>% testResiduals()
+```
+
+## Fit model 2 (Poisson)
+
+```{r fitModel4a, results='markdown', eval=TRUE, hidden=TRUE}
+owls.glmmTMB6 <- glmmTMB(NCalls ~ FoodTreatment*SexParent + offset(log(BroodSize)) +
+                           (FoodTreatment*SexParent|Nest), 
+                         ziformula=~FoodTreatment*SexParent,  data=owls,
+                         family=poisson(link='log'), REML=TRUE)
+```
+
+Model validation
+
+```{r fitModel4b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4}
+owls.resid <- owls.glmmTMB4 %>% simulateResiduals(plot=TRUE, integerResponse = TRUE)
+owls.resid %>% testZeroInflation()
+owls.resid %>% testDispersion()
+owls.resid %>% testUniformity()
+owls.resid %>% testQuantiles()
+owls.resid %>% testResiduals()
+```
+
+## Fit model 3 (Negative Binomial)
+
+```{r fitModel5, results='markdown', eval=TRUE, hidden=TRUE}
+owls.glmmTMB7 <- glmmTMB(NCalls ~ FoodTreatment*SexParent + offset(log(BroodSize)) +
+                           (FoodTreatment*SexParent|Nest), 
+                         ziformula = ~1,  data=owls,
+                         family=nbinom2(link='log'), REML=TRUE)
+```
+
+Model validation
+
+```{r fitModel5b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4}
+owls.resid <- owls.glmmTMB5 %>% simulateResiduals(plot=TRUE, integerResponse = TRUE)
+owls.resid %>% testZeroInflation()
+owls.resid %>% testDispersion()
+owls.resid %>% testUniformity()
+owls.resid %>% testQuantiles()
+owls.resid %>% testResiduals()
+```
+
+## Fit model 4 (Negative Binomial)
+
+```{r fitModel6a, results='markdown', eval=TRUE, hidden=TRUE}
+owls.glmmTMB8 <- glmmTMB(NCalls ~ FoodTreatment*SexParent + offset(log(BroodSize)) +
+                           (FoodTreatment+SexParent|Nest), 
+                         ziformula = ~FoodTreatment*SexParent,  data=owls,
+                         family=nbinom2(link='log'), REML=TRUE)
+```
+
+Model validation
+
+```{r fitModel6b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4}
+owls.resid <- owls.glmmTMB6 %>% simulateResiduals(plot=TRUE, integerResponse = TRUE)
+owls.resid %>% testZeroInflation()
+owls.resid %>% testDispersion()
+owls.resid %>% testUniformity()
+owls.resid %>% testQuantiles()
+testResiduals(owls.resid)
+```
+
+## Compare models
+
+```{r compareModels, results='markdown', eval=TRUE}
+AICc(owls.glmmTMB4a, owls.glmmTMB5,  owls.glmmTMB6, owls.glmmTMB7, owls.glmmTMB8)
+```
+
+**Conclusions:**
+
+- on the basis of AICc and residual diagnostics, it looks like `glmmTMB8` is the
+  'best' model to pursue.
+  
+</div>
+
+
+# Partial plots {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## plot_model
+
+```{r partialPlots1a, results='markdown', eval=TRUE}
+owls.glmmTMB8 %>% plot_model(type='eff',  terms=c('FoodTreatment', 'SexParent'))
+```
+
+These predictions appear to be based on the mean BroodSize of approximately 
+`r round(mean(owls$BroodSize), 2)`. That is, the predictions are for a nest, 
+not per chick.  There does not appear to be a way to indicate the offset value.
+
+## allEffects
+
+```{r partialPlots1b, results='markdown', eval=TRUE}
+owls.glmmTMB8 %>% allEffects() %>% plot(multiline=TRUE, ci.style='bars')
+```
+
+These predictions also appear to be based on the mean BroodSize, although the
+documentation seems to suggest that `allEffects()` might not deal with the
+offsets the way we have used them (as a function in the formula) correctly.
+
+## ggpredict
+
+```{r partialPlots1c, results='markdown', eval=TRUE}
+owls.glmmTMB8 %>% ggpredict(terms=c('FoodTreatment', 'SexParent')) %>% plot()
+```
+
+**This seems to deal with the offset incorrectly**.  For the purpose of
+prediction, the offset seems to be set at the value of the first BroodSize (on
+the response scale).  This is incorrect for two reasons:
+
+1. it should be on the log scale
+2. it would be better to use either the mean BroodSize (then on the link scale)
+   or a value of 0 (so as to reflect the per unit BroodSize prediction).
+   
+## ggemmeans
+
+`ggemmeans()` can accommodate the offset correctly.  There are two sensible
+choices:
+
+- set the offset to the (log) of the mean BroodSize (similar to other partial
+  effects), hence giving predictions appropriate for the average brood size conclusion.
+  
+```{r partialPlots1d1, results='markdown', eval=TRUE}
+#off<-owls %>% group_by(SexParent, FoodTreatment) %>% summarize(Mean=mean(BroodSize))
+off <- owls %>% summarize(Mean=mean(BroodSize))
+as.numeric(off)
+owls.glmmTMB8 %>% ggemmeans(~FoodTreatment+SexParent, offset=log(off$Mean)) %>% plot()
+```
+
+- set the offset to 0.  This results in predictions appropriate for a per owl
+  chick conclusion.
+
+```{r partialPlots1d2, results='markdown', eval=TRUE}
+owls.glmmTMB8 %>% ggemmeans(~FoodTreatment+SexParent, offset=0) %>% plot()
+```
+
+</div>
+
+# Model investigation / hypothesis testing {.tabset .tabset-faded}
+
+<div class='HIDDEN'>
+
+## summary
+
+```{r summary1a, results='markdown', eval=TRUE, hidden=TRUE}
+owls.glmmTMB8 %>% summary()
+```
+
+```{r summary1a1, results='markdown', eval=TRUE, echo=FALSE, hidden=TRUE}
+owls.tidy <- owls.glmmTMB8 %>% tidy()
+```
+
+**Conclusions:**
+
+- the average number of calls made per food deprived owl chicks when the female
+  parent returns to the nest is `r as.numeric(round(owls.tidy[1, 5],2))` (on the
+  link scale). When back-transformed, this is `r as.numeric(round(exp(owls.tidy[1, 5]),2))`.
+- on average, satiated chicks negotiate 
+  `r as.numeric(round(owls.tidy[2,5]),2)` (link scale) less when the female
+  returns than deprived chicks.  This equates to
+  `r as.numeric(round(exp(owls.tidy[2,5]),2))` fold fewer times and represents a
+  `r as.numeric(100*(1-round(exp(owls.tidy[2,5]),2)))`% decline. 
+- on average, when the male parent returns, deprived chicks negotiate 
+  `r as.numeric(round(owls.tidy[3,5]),2)` (link scale) less when the female
+  returns.  This equates to `r as.numeric(round(exp(owls.tidy[3,5]),2))` fold
+  fewer times and represents a
+  `r as.numeric(100*(1-round(exp(owls.tidy[3,5]),2)))`% decline (although this
+  is not significant). 
+- there was not significantly detectable interaction suggesting that the effect
+  of food treatment was consistent across both parents and vice versa.
+- the estimated rate of non-detection of calls (false zeros) for deprived chicks
+  when the female parent returns is `r as.numeric(round(owls.tidy[5,5],2))` 
+  (logit scale).  When back-transformed to the odds scale, this equates to the
+  odds of a zero being false are `r as.numeric(round(exp(owls.tidy[5,5]),2))`:1.
+  Expressed on a probability scale, it would suggest that the probability of a
+  zero being false is `r round(plogis(as.numeric(owls.tidy[5,5])),2)`.
+- when the chicks are satiated, the odds not detecting a call (false zero) are 
+  increased `r as.numeric(round(exp(owls.tidy[6,5]),2))` fold.  That is, the odds
+  increase by `r round(100*(1-plogis(as.numeric(owls.tidy[6,5]))), 2)`%.
+- when the returning parent is male (for deprived chicks), the odds of not
+  detecting a call (false zeros) are reduced 
+  `r as.numeric(round(exp(owls.tidy[7,5]),2))` fold.  That is, the odds decline
+  by `r round(100*(1-plogis(as.numeric(owls.tidy[7,5]))), 2)`%.
+- there is substantially more variation in sibling negotiations between food
+  treatment effects within a nest than either between nests or between the sex
+  of the parent effects within nests.
+- variation in the sex of the parent effect is slightly negatively correlated to
+  the variation between nests
+- variation in the sex of the parent effect is negatively correlated to the
+  variation in the interaction effect.
+
+
+## tidy
+
+```{r summary1b, results='markdown', eval=TRUE, hidden=TRUE}
+owls.glmmTMB8 %>% tidy(conf.int=TRUE)
+## or on the response scale
+owls.glmmTMB8 %>% tidy(conf.int=TRUE, exponentiate = TRUE)
+owls.glmmTMB8 %>% tidy(conf.int=TRUE, exponentiate = TRUE) %>% kable
+```
+**Conclusions:**
+
+- the average number of calls made per food deprived owl chicks when the female
+  parent returns to the nest is `r as.numeric(round(owls.tidy[1, 5],2))` (on the
+  link scale). When back-transformed, this is `r as.numeric(round(exp(owls.tidy[1, 5]),2))`.
+- on average, satiated chicks negotiate 
+  `r as.numeric(round(owls.tidy[2,5]),2)` (link scale) less when the female
+  returns than deprived chicks.  This equates to
+  `r as.numeric(round(exp(owls.tidy[2,5]),2))` fold fewer times and represents a
+  `r round(100*(exp(as.numeric(owls.tidy[2,5]))-1), 2)`% decline. 
+- on average, when the male parent returns, deprived chicks negotiate 
+  `r as.numeric(round(owls.tidy[3,5]),2)` (link scale) less when the female
+  returns.  This equates to `r as.numeric(round(exp(owls.tidy[3,5]),2))` fold
+  fewer times and represents a
+  `r round(100*(exp(as.numeric(owls.tidy[3,5]))-1), 2)`% decline (although this
+  is not significant). 
+- there was not significantly detectable interaction suggesting that the effect
+  of food treatment was consistent across both parents and vice versa.
+- the estimated rate of non-detection of calls (false zeros) for deprived chicks
+  when the female parent returns is `r as.numeric(round(owls.tidy[5,5],2))` 
+  (logit scale).  When back-transformed to the odds scale, this equates to the
+  odds of a zero being false are `r as.numeric(round(exp(owls.tidy[5,5]),2))`:1.
+  Expressed on a probability scale, it would suggest that the probability of a
+  zero being false is `r round(plogis(as.numeric(owls.tidy[5,5])),2)`.
+- when the chicks are satiated, the odds not detecting a call (false zero) are 
+  increased `r as.numeric(round(exp(owls.tidy[6,5]),2))` fold.  That is, the odds
+  increase by `r round(100*(exp(as.numeric(owls.tidy[6,5]))-1), 2)`%.
+- when the returning parent is male (for deprived chicks), the odds of not
+  detecting a call (false zeros) are reduced 
+  `r as.numeric(round(exp(owls.tidy[7,5]),2))` fold.  That is, the odds decline
+  by `r round(-100*(exp(as.numeric(owls.tidy[7,5]))-1), 2)`%.
+- there is substantially more variation in sibling negotiations between food
+  treatment effects within a nest than either between nests or between the sex
+  of the parent effects within nests.
+- variation in the sex of the parent effect is slightly negatively correlated to
+  the variation between nests
+- variation in the sex of the parent effect is negatively correlated to the
+  variation in the interaction effect.
+
+## tab_model
+
+```{r summary1c, results='markdown', eval=TRUE, hidden=TRUE}
+# warning this is only appropriate for html output
+owls.glmmTMB8 %>% sjPlot::tab_model( show.se=TRUE, show.aic=TRUE)
+```
+
+```{r, eval=FALSE}
+options(width=100)
+owls.glmmTMB8 %>% tidy(conf.int=TRUE)
+plogis(-1.53)
+exp(-1.53)
+owls.glmmTMB8 %>% tidy(effects='fixed', conf.int=TRUE,  exponentiate=TRUE)
+```
+
+</div>
+
+# Predictions
+
+<div class='HIDDEN'>
+
+## $R^2$
+
+```{r r2, results='markdown', eval=TRUE, hidden=TRUE}
+## owls.glmmTMB8 %>% r.squaredGLMM()
+owls.glmmTMB8 %>% performance::r2_nakagawa()
+## owls.glmmTMB8 %>% performance::r2_zeroinflated()
+```
+
+</div>
+
+# Summary figures
+
+<div class='HIDDEN'>
+
+```{r summaryFig1a, results='markdown', eval=TRUE, hidden=TRUE}
+newdata <- owls.glmmTMB8 %>%
+    emmeans(~FoodTreatment+SexParent, 
+            offset = 0, type = 'response') %>%
+    as.data.frame
+head(newdata)
+ggplot(newdata, aes(y = response, x = FoodTreatment)) +
+  geom_pointrange(aes(ymin = lower.CL, ymax = upper.CL, color = SexParent),
+                  position = position_dodge(width = 0.2)) +
+  scale_y_continuous('Number of sibling negotiations per chick') +
+  theme_bw()
+
+##OR if we want to express this for the average brood size
+newdata <- owls.glmmTMB8 %>% emmeans(~FoodTreatment+SexParent,
+                  offset = log(mean(owls$BroodSize)), type='response') %>%
+    as.data.frame
+head(newdata)
+ggplot(newdata, aes(y = response, x = FoodTreatment)) +
+  geom_pointrange(aes(ymin = lower.CL, ymax = upper.CL, color = SexParent),
+                  position = position_dodge(width = 0.2)) +
+  scale_y_continuous('Number of sibling negotiations per nest') +
+  theme_bw()
+```
+
+
+```{r comparemodels, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=6}
+
+newdata <- tidy(owls.glmmTMB5, effects = 'fixed', conf.int = TRUE,  exponentiate = TRUE) %>%
+  mutate(Model = 'zip (simple zi)') %>%
+  bind_rows(
+    tidy(owls.glmmTMB6, effects = 'fixed', conf.int = TRUE,  exponentiate = TRUE) %>%
+    mutate(Model = 'zip (complex zi)')
+  ) %>%
+  bind_rows(
+    tidy(owls.glmmTMB7, effects = 'fixed', conf.int = TRUE,  exponentiate = TRUE) %>%
+    mutate(Model = 'zinb (simple zi)')
+  ) %>%
+  bind_rows(
+    tidy(owls.glmmTMB8, effects = 'fixed', conf.int = TRUE,  exponentiate = TRUE) %>%
+    mutate(Model = 'zinb (complex zi)')
+  ) %>%
+  mutate(Model = factor(Model,  levels = c('zip (simple zi)', 'zip (complex zi)',
+                                       'zinb (simple zi)', 'zinb (complex zi)')),
+         Cond = interaction(component, term)) %>%
+  arrange(component, term) %>%
+    mutate(Cond = factor(Cond,
+                         levels = rev(unique(Cond))))
+
+ggplot(newdata,  aes(y = estimate,  x = Cond,  color = Model)) +
+  geom_pointrange(aes(ymin = conf.low,  ymax = conf.high),  position = position_dodge(width=0.2)) +
+  coord_flip()
+
+
+newdata = emmeans(owls.glmmTMB5, ~FoodTreatment+SexParent, offset=0, type='response') %>%
+  as.data.frame %>% mutate(Model='zip (simple zi)',  response=rate) %>%
+  bind_rows(
+    emmeans(owls.glmmTMB6, ~FoodTreatment+SexParent, offset=0, type='response') %>%
+    as.data.frame %>% mutate(Model='zip (complex zi)',  response=rate)
+  ) %>%
+  bind_rows(
+    emmeans(owls.glmmTMB7, ~FoodTreatment+SexParent, offset=0, type='response') %>%
+    as.data.frame %>% mutate(Model='zinb (simple zi)',  response=response)
+  ) %>%
+  bind_rows(
+    emmeans(owls.glmmTMB8, ~FoodTreatment+SexParent, offset=0, type='response') %>%
+    as.data.frame %>% mutate(Model='zinb (complex zi)',  response=response)
+  ) %>%
+  mutate(Model=factor(Model,  levels=c('zip (simple zi)', 'zip (complex zi)',
+                                       'zinb (simple zi)', 'zinb (complex zi)')))
+
+head(newdata)
+ggplot(newdata, aes(y=response, x=FoodTreatment)) +
+  geom_pointrange(aes(color=SexParent, ymin=lower.CL, ymax=upper.CL), 
+                  position=position_dodge(width=0.2)) +
+  facet_wrap(~Model,  nrow=1)
+
+ggplot(newdata,  aes(y=response,  x=interaction(FoodTreatment,SexParent),  color=Model)) +
+  geom_pointrange(aes(ymin=lower.CL,  ymax=upper.CL),  position=position_dodge(width=0.2)) +
+  coord_flip()
+```
+
+</div>
+
+# References
+
