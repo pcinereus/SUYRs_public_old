@@ -1,0 +1,555 @@
+---
+title: "Bayesian GLM Part1"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../resources/references.bib
+---
+ 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE}
+library(rstanarm)   #for fitting models in STAN
+library(brms)       #for fitting models in STAN
+library(standist)   #for exploring distributions
+library(coda)       #for diagnostics
+library(bayesplot)  #for diagnostics
+library(ggmcmc)     #for MCMC diagnostics
+library(DHARMa)     #for residual diagnostics
+library(rstan)      #for interfacing with STAN
+library(emmeans)    #for marginal means etc
+library(broom)      #for tidying outputs
+library(tidybayes)  #for more tidying outputs
+library(HDInterval) #for HPD intervals
+library(ggeffects)  #for partial plots
+library(tidyverse)  #for data wrangling etc
+library(broom.mixed)#for summarising models
+library(posterior)  #for posterior draws
+library(ggeffects)  #for partial effects plots
+library(patchwork)  #for multi-panel figures
+theme_set(theme_grey()) #put the default ggplot theme back
+```
+
+# Scenario
+
+Here is an example from @Fowler-1998-1998. An agriculturalist was interested in the effects of fertilizer load on the yield of grass.  Grass seed was sown uniformly over an area and different quantities of commercial fertilizer were applied to each of ten 1 m<sup>2</sup> randomly located plots.  Two months later the grass from each plot was harvested, dried and weighed.  The data are in the file **fertilizer.csv** in the **data** folder.
+
+![](../resources/turf.jpg){width=70%}
+
+| FERTILIZER   | YIELD   |
+| ------------ | ------- |
+| 25           | 84      |
+| 50           | 80      |
+| 75           | 90      |
+| 100          | 154     |
+| 125          | 148     |
+| \...         | \...    |
+
+---------------- ---------------------------------------------------
+**FERTILIZER**:   Mass of fertilizer (g.m^-2^) - Predictor variable
+**YIELD**:        Yield of grass (g.m^-2^) - Response variable
+---------------- ---------------------------------------------------
+ 
+ 
+The aim of the analysis is to investigate the relationship between fertilizer concentration and grass yield.
+
+# Read in the data
+
+
+```{r readData, results='markdown', eval=TRUE}
+fert <- read_csv('../data/fertilizer.csv', trim_ws = TRUE)
+glimpse(fert)
+```
+
+# Exploratory data analysis
+
+
+Model formula:
+$$
+\begin{align}
+y_i &\sim{} \mathcal{N}(\mu_i, \sigma^2)\\
+\mu_i &= \beta_0 + \beta_1 x_i\\
+\beta_0 &\sim{} \mathcal{N}(0,100)\\
+\beta_1 &\sim{} \mathcal{N}(0,10)\\
+\sigma &\sim{} \mathcal{cauchy}(0,5)\\
+OR\\
+\sigma &\sim{} \mathcal{Exp}(1)\\
+OR\\
+\sigma &\sim{} \mathcal{gamma}(2,1)\\
+\end{align}
+$$
+
+# Fit the model {.tabset .tabset-faded}
+
+
+
+# MCMC sampling diagnostics {.tabset .tabset-faded}
+
+**MCMC sampling behaviour**
+
+Since the purpose of the MCMC sampling is to estimate the posterior of
+an unknown joint likelihood, it is important that we explore a range
+of diagnostics designed to help identify when the resulting likelihood
+might not be accurate.
+
+- **traceplots** - plots of the individual draws in sequence.  Traces
+  that resemble noise suggest that all likelihood features are likely
+  to have be traversed. Obvious steps or blocks of noise are likely to
+  represent distinct features and could imply that there are yet other
+  features that have not yet been traversed - necessitating additional
+  iterations.  Furthermore, each chain should be indistinguishable
+  from the others
+- **autocorrelation function** - plots of the degree of correlation
+  between pairs of draws for a range of lags (distance along the
+  chains).  High levels of correlation (after a lag of 0, which is
+  correlating each draw with itself) suggests a lack of independence
+  between the draws and that therefore, summaries such as mean and
+  median will be biased estimates.  Ideally, all non-zero lag
+  correlations should be less than 0.2.
+- **convergence diagnostics** - there are a range of diagnostics aimed
+  at exploring whether the multiple chains are likely to have
+  converged upon similar posteriors
+  - **R hat** - this metric compares between and within chain model
+    parameter estimates, with the expectation that if the chains have
+    converged, the between and within rank normalised estimates should
+    be very similar (and Rhat should be close to 1).  The more one
+    chains deviates from the others, the higher the Rhat value.
+    Values less than 1.05 are considered evidence of convergence.
+  - **Bulk ESS** - this is a measure of the effective sample size
+    from the whole (bulk) of the posterior and is a good measure of
+    the sampling efficiency of draws across the entire posterior
+  - **Tail ESS** - this is a measure of the effective sample size from
+    the 5% and 95% quantiles (tails) of the posterior and is a good
+    measure of the sampling efficiency of draws from the tail (areas
+    of the posterior with least support and where samplers can get
+    stuck).
+	
+
+
+`available_mcmc()`
+
+| Package   | Description       | function               | rstanarm                         | brms                               |
+|-----------|-------------------|------------------------|----------------------------------|------------------------------------|
+| bayesplot | Traceplot         | `mcmc_trace`           | `plot(mod, plotfun='trace')`     | `mcmc_plot(mod, type='trace')`     |
+|           | Density plot      | `mcmc_dens`            | `plot(mod, plotfun='dens')`      | `mcmc_plot(mod, type='dens')`      |
+|           | Density & Trace   | `mcmc_combo`           | `plot(mod, plotfun='combo')`     | `mcmc_plot(mod, type='combo')`     |
+|           | ACF               | `mcmc_acf_bar`         | `plot(mod, plotfun='acf_bar')`   | `mcmc_plot(mod, type='acf_bar')`   |
+|           | Rhat hist         | `mcmc_rhat_hist`       | `plot(mod, plotfun='rhat_hist')` | `mcmc_plot(mod, type='rhat_hist')` |
+|           | No. Effective     | `mcmc_neff_hist`       | `plot(mod, plotfun='neff_hist')` | `mcmc_plot(mod, type='neff_hist')` |
+| rstan     | Traceplot         | `stan_trace`           | `stan_trace(mod)`                | `stan_trace(mod)`                  |
+|           | ACF               | `stan_ac`              | `stan_ac(mod)`                   | `stan_ac(mod)`                     |
+|           | Rhat              | `stan_rhat`            | `stan_rhat(mod)`                 | `stan_rhat(mod)`                   |
+|           | No. Effective     | `stan_ess`             | `stan_ess(mod)`                  | `stan_ess(mod)`                    |
+|           | Density plot      | `stan_dens`            | `stan_dens(mod)`                 | `stan_dens(mod)`                   |
+| ggmcmc    | Traceplot         | `ggs_traceplot`        | `ggs_traceplot(ggs(mod))`        | `ggs_traceplot(ggs(mod))`          |
+|           | ACF               | `ggs_autocorrelation`  | `ggs_autocorrelation(ggs(mod))`  | `ggs_autocorrelation(ggs(mod))`    |
+|           | Rhat              | `ggs_Rhat`             | `ggs_Rhat(ggs(mod))`             | `ggs_Rhat(ggs(mod))`               |
+|           | No. Effective     | `ggs_effective`        | `ggs_effective(ggs(mod))`        | `ggs_effective(ggs(mod))`          |
+|           | Cross correlation | `ggs_crosscorrelation` | `ggs_crosscorrelation(ggs(mod))` | `ggs_crosscorrelation(ggs(mod))`   |
+|           | Scale reduction   | `ggs_grb`              | `ggs_grb(ggs(mod))`              | `ggs_grb(ggs(mod))`                |
+|           |                   |                        |                                  |                                    |
+
+# Model validation {.tabset .tabset-faded}
+
+**Posterior probability checks**
+
+`available_ppc()`
+
+| Package   | Description       | function                     | rstanarm                                               | brms                                               |
+|-----------|-------------------|------------------------------|-------------------------------------------------------|----------------------------------------------------|
+| bayesplot | Density overlay   | `ppc_dens_overlay`           | `pp_check(mod, plotfun='dens_overlay')`               | `pp_check(mod, type='dens_overlay')`               |
+|           | Obs vs Pred error | `ppc_error_scatter_avg`      | `pp_check(mod, plotfun='error_scatter_avg')`          | `pp_check(mod, type='error_scatter_avg')`          |
+|           | Pred error vs x   | `ppc_error_scatter_avg_vs_x` | `pp_check(mod, x=, plotfun='error_scatter_avg_vs_x')` | `pp_check(mod, x=, type='error_scatter_avg_vs_x')` |
+|           | Preds vs x        | `ppc_intervals`              | `pp_check(mod, x=, plotfun='intervals')`              | `pp_check(mod, x=, type='intervals')`              |
+|           | Partial plot       | `ppc_ribbon`                 | `pp_check(mod, x=, plotfun='ribbon')`                 | `pp_check(mod, x=, type='ribbon')`                 |
+|           |                   |                              |                                                       |                                                    |
+
+
+
+
+
+# Partial effects plots {.tabset .tabset-faded}
+
+
+# Model investigation {.tabset .tabset-faded}
+
+Rather than simply return point estimates of each of the model
+parameters, Bayesian analyses capture the full posterior of each
+parameter.  These are typically stored within the `list` structure of
+the output object.
+
+As with most statistical routines, the overloaded `summary()` function
+provides an overall summary of the model parameters.  Typically, the
+summaries will include the means / medians along with credibility
+intervals and perhaps convergence diagnostics (such as R hat).
+However, more thorough investigation and analysis of the parameter
+posteriors requires access to the full posteriors.
+
+There is currently a plethora of functions for extracting the full
+posteriors from models.  In part, this is a reflection of a rapidly
+evolving space with numerous packages providing near equivalent
+functionality (it should also be noted, that over time, many of the
+functions have been deprecated due to inconsistencies in their names).
+Broadly speaking, the functions focus on draws from the posterior of
+either the parameters (intercept, slope, standard deviation etc),
+**linear predictor**, **expected values** or **predicted values**.
+The distinction between the latter three are highlighted in the
+following table.
+
+| Property          | Description                                                                                  |
+|-------------------|----------------------------------------------------------------------------------------------|
+| linear predictors | values predicted on the link scale                                                           |
+| expected values   | predictions (on response scale) without residual error (predicting expected mean outcome(s)) |
+| predicted values  | predictions (on response scale) that incorporate residual error                              |
+|                   |                                                                                              |
+| fitted values     | predictions on the response scale                                                            |
+
+The following table lists the various ways of extracting the full
+posteriors of the model parameters parameters, **expected** values and
+**predicted** values. The crossed out items are now deprecated and
+function with a namespace of `__` mean that the functionality is
+provided via a range of packages.
+
++---------------------------------+-------------------+---------------------------------------------------------+
+| Function                        | Values            | Description                                             |
++=================================+===================+=========================================================+
+| `__::as.matrix()`               | Parameters        | Returns $n\times p$ matrix                              |
++---------------------------------+-------------------+---------------------------------------------------------+
+| `__::as.data.frame()`           | Parameters        | Returns $n\times p$ data.frame                          |
++---------------------------------+-------------------+---------------------------------------------------------+
+| `__::as_tibble()`               | Parameters        | Returns $n\times p$ tibble                              |
++---------------------------------+-------------------+---------------------------------------------------------+
+| `posterior::as_draws_df()`      | Parameters        | Returns $n\times p$ data.frame with additional info     |
+|                                 |                   | about chain, interaction and draw                       |
++---------------------------------+-------------------+---------------------------------------------------------+
+| ~~`brms::posterior_samples()`~~ | ~~Parameters~~    | ~~Returns $n\times p$ data.frame~~                      |
++---------------------------------+-------------------+---------------------------------------------------------+
+| `tidybayes::tidy_draws()`       | Parameters        | Returns $n\times p$ tibble with addition info about     |
+|                                 |                   | the chain, iteration and draw                           |
++---------------------------------+-------------------+---------------------------------------------------------+
+| `rstan::extract()`              | Parameters        | Returns a $p$ length list of $n$ length vectors         |
++---------------------------------+-------------------+---------------------------------------------------------+
+| `tidybayes::spread_draws()`     | Parameters        | Returns $n\times r$ tibble with additional info about   |
+|                                 |                   | chain, interaction and draw                             |
++---------------------------------+-------------------+---------------------------------------------------------+
+| `tidybayes::gather_draws()`     | Parameters        | Returns a gathered `spread_draws` tibble                |
+|                                 |                   | with additional info about chain, interaction and draw  |
++---------------------------------+-------------------+---------------------------------------------------------+
+| `rstanarm::posterior_linpred()` | Linear predictors | Returns $n\times N$ tibble on the link scale            |
++---------------------------------+-------------------+---------------------------------------------------------+
+| `brms::posterior_linpred()`     | Linear predictors | Returns $n\times N$ tibble on the link scale            |
++---------------------------------+-------------------+---------------------------------------------------------+
+| `tidybayes::linpred_draws()`    | Linear predictors | Returns tibble with $n\times N rows and `.linpred`      |
+|                                 |                   | on the link scale additional info about chain,          |
+|                                 |                   | interaction and draw                                    |
++---------------------------------+-------------------+---------------------------------------------------------+
+| `rstanarm::posterior_epred()`   | Expected values   | Returns $n\times N$ tibble on the response scale        |
++---------------------------------+-------------------+---------------------------------------------------------+
+| `brms::posterior_epred()`       | Expected values   | Returns $n\times N$ tibble on the response scale        |
++---------------------------------+-------------------+---------------------------------------------------------+
+| `tidybayes::epred_draws()`      | Expected values   | Returns tibble with $n\times N rows and `.epred` on     |
+|                                 |                   | the response scale additional info about chain,         |
+|                                 |                   | interaction and draw                                    |
++---------------------------------+-------------------+---------------------------------------------------------+
+| `rstanarm::posterior_predict()` | Expected values   | Returns $n\times N$ tibble of predictions (including    |
+|                                 |                   | residuals) on the response scale                        |
++---------------------------------+-------------------+---------------------------------------------------------+
+| `brms::posterior_predict()`     | Expected values   | Returns $n\times N$ tibble of predictions (including    |
+|                                 |                   | residuals) on the response scale                        |
++---------------------------------+-------------------+---------------------------------------------------------+
+| `tidybayes::predicted_draws()`  | Expected values   | Returns tibble with $n\times N rows and `.prediction`   |
+|                                 |                   | (including residuals) on the response scale additional  |
+|                                 |                   | info about chain, interaction and draw                  |
++---------------------------------+-------------------+---------------------------------------------------------+
+
+
+where $n$ is the number of MCMC samples and $p$ is the number of
+parameters to estimate, $N$ is the number of newdata rows and $r$ is
+the number of requested parameters.  For the `tidybayes` versions in
+the table above, the function expects a model to be the first
+parameter (and a dataframe to be the second).  There are also `add_`
+versions which expect a dataframe to be the first argument and the
+model to be the second.  These alternatives facilitate pipings with
+different starting objects.
+
+
+| Function      | Description                                                                    |
+|---------------|--------------------------------------------------------------------------------|
+| `median_qi`   | Median and quantiles of specific columns                                       |
+| `median_hdi`  | Median and Highest Probability Density Interval of specific columns            |
+| `median_hdci` | Median and continuous Highest Probability Density Interval of specific columns |
+| `tidyMCMC`    | Median/mean and quantiles/hpd of all columns                                   |
+
+
+
+
+
+## INLA {.tabset .tabset-pills}
+INLA captures a summary of the parameter posteriors within the fitted object.
+
+### summary
+The `summary()` method generates simple summaries (mean, standard deviation as
+well as 10, 50 and 90 percentiles).
+
+
+
+**Conclusions:**
+
+- in the initial block of information, we are reminded of the function _call_
+- a breakdown of the various components of the time taken for the
+  analysis to run
+- the 'Fixed effects' indicate that the:
+  -  estimated Intercept is `r fert.inla1.sum$fixed[1,1]` (mean) or 
+     `r fert.inla1.sum$fixed[1,4]` (median)
+  -  estimated slope is `r fert.inla1.sum$fixed[2,1]` (mean) or 
+     `r fert.inla1.sum$fixed[2,4]` (median)
+  -  the 95% Credibility intervals indicate that we are 95% confident
+     that the slope is between `r fert.inla1.sum$fixed[2,3]` and 
+	 `r fert.inla1.sum$fixed[2,5]`
+- the `Model hyperparameters' indicate that the:
+  -  the precision of the Gaussian distribution is 
+     `r fert.inla1.sum$hyperpar[1,1]` (mean) and 
+	 `r fert.inla1.sum$hyperpar[1,4]` (median) .  Precision is $\tau = 1/\sigma^2$
+     and thus, $\sigma$ is estimated to be 
+	 `r 1/sqrt(fert.inla1.sum$hyperpar[1,4])`
+  -  WAIC (Watanabe-Akaike information criterion is estimated to be 
+     `r fert.inla1.sum$waic$waic`
+
+### Plot of posteriors {.tabset .tabset-pills}
+#### Fixed effects
+
+#### Hyperparameters
+
+
+### Posterior draws {.tabset .tabset-pills}
+
+Since INLA is a Bayesian approximation, unlike full Bayesian methods,
+there are not chains of posterior draws.  However, we can use the
+`inla.posterior.sample()` _function_, to **generate** draws of
+parameter and fitted value posteriors from the fitted model.  In the
+following code snippet, we will generate 1000 draws from the fitted
+model (for repeatability, I will also set a random seed).
+
+The output of this function is a _list_ and items are packed in
+according to the sample (draw) number.  I find this awkward to work
+with and prefer to have the data organised by parameters.  However,
+prior to reorganising the list, I will query the latent (fixed and
+fitted values) parameter names to help with filtering to just the ones
+I am interested in later on.
+
+
+The names that begin with `Predictor:` are the _fitted_ values.
+Essentially, they are the estimated predicted values associated with
+the observed data.  The `(Intercept):1` and `FERTILIZER:1` are the
+intercept and slope respectively.
+
+Now to convert the list of draws into a data.frame.
+
+
+This will convert the list into a $s\times p$ data.frame, where $s$ is
+the number of draws (1000 in this case) and $p$ is the number of
+latent parameters (12 in this case) plus an additional column to keep
+track of the Parameters.
+
+Finally, we might like to lengthen this data set for more convenient
+plotting and summarising.
+
+
+#### Intervals
+
+To focus on and filter to just the fixed effects, we could now:
+
+
+#### Density intervals 
+
+ 
+#### Ridges
+
+
+### $R^2$
+
+
+
+
+# Predictions {.tabset .tabset-faded}
+
+
+
+
+## INLA {.tabset .tabset-pills}
+As with most things to do with INLA, things are done a little
+differently.  In INLA, there are three options for predictions:
+
+1. generate draws of the parameters and calculate the outer product of
+   these and a model matrix associated with the newdata.
+2. bind the newdata to the observed data when fitting the model which
+   will result in INLA estimating the fitted values during model
+   fitting. In this approach, the response values associated with the
+   newdata should all be `NA`.
+3. define a linear combinations and pass this into the model during
+   fitting
+
+Lets explore each of these in turn.
+
+### From draws
+
+```{r predictions3a, results='markdown', eval=TRUE, fig.width=8, fig.height=5}
+## Expected values
+Xmat <- model.matrix(~FERTILIZER, newdata)
+nms <- colnames(fert.inla1$model.matrix)
+sel <- sapply(nms, function(x) 0, simplify = FALSE)
+n <- 1000
+draws <- inla.posterior.sample(n = n, result = fert.inla1, selection = sel, seed = 1)
+coefs <- t(sapply(draws, function(x) x$latent))
+Fit <- coefs %*% t(Xmat) %>%
+  as.data.frame() %>%
+  mutate(Rep = 1:n()) %>%
+  pivot_longer(cols = -Rep) %>%
+  group_by(name) %>%
+  median_hdci(value) %>%
+  ungroup() %>%
+  mutate(name = as.integer(as.character(name))) %>%
+  arrange(name)
+newdata.inla <- newdata %>%
+  bind_cols(Fit)
+newdata.inla
+
+## Predictions
+Fit <- coefs %*% t(Xmat) 
+draws <- inla.posterior.sample(n = n, result = fert.inla1, seed = 1)
+sigma <- sqrt(1/(sapply(draws, function(x) x$hyperpar)))
+sigma <- sapply(sigma, function(x) rnorm(1,0,sigma))
+Fit <- sweep(Fit, MARGIN = 1, sigma, FUN = "+") %>%
+    as.data.frame() %>%
+    mutate(Rep = 1:n()) %>%
+    pivot_longer(cols = -Rep) %>%
+    group_by(name) %>%
+    median_hdci(value) %>%
+    bind_cols(newdata) %>% 
+    ungroup() %>%
+    dplyr::select(FERTILIZER, everything(), -name)
+Fit
+
+## or
+fun <- function(coefs = NA) {
+    ## theta[1] is the precision
+    return (Intercept + FERTILIZER * coefs[,'FERTILIZER'] +
+            rnorm(nrow(coefs), sd = sqrt(1/theta[1])))
+}
+Fit <- inla.posterior.sample.eval(fun, draws, coefs = newdata) %>%
+    as.data.frame() %>%
+    bind_cols(newdata) %>%
+    pivot_longer(cols = -FERTILIZER) %>%
+    group_by(FERTILIZER) %>%
+    median_hdci(value)
+    
+Fit
+
+```
+
+### Fitted (expected) values
+
+```{r predictions3b, results='markdown', eval=TRUE, fig.width=8, fig.height=5}
+fert.pred <- fert %>%
+    bind_rows(newdata)
+i.newdata <- (nrow(fert) +1):nrow(fert.pred)
+fert.inla2 <- inla(YIELD ~ FERTILIZER,
+  data = fert.pred,
+  family = "gaussian",
+  control.fixed = list(
+    mean.intercept = 80,
+    prec.intercept = 0.00001,
+    mean = 0,
+    prec = 0.0384
+  ),
+  control.family = list(hyper = list(prec = list(
+    prior = "loggamma",
+    param = c(0.5, 0.31)
+  ))),
+  control.compute = list(config = TRUE, dic = TRUE, waic = TRUE, cpo = TRUE)
+)
+
+fert.inla2$summary.fitted.values[i.newdata,]
+## or on the link scale...
+fert.inla2$summary.linear.predictor[i.newdata,]
+```
+
+### Linear combinations
+
+```{r predictions3c, results='markdown', eval=TRUE, fig.width=8, fig.height=5}
+Xmat <- model.matrix(~FERTILIZER, data=newdata)
+lincomb <- inla.make.lincombs(as.data.frame(Xmat))
+
+fert.inla3 <- inla(YIELD ~ FERTILIZER,
+  data = fert,
+  family = "gaussian",
+  lincomb = lincomb,
+  control.fixed = list(
+    mean.intercept = 80,
+    prec.intercept = 0.00001,
+    mean = 0,
+    prec = 0.0384
+  ),
+  control.family = list(hyper = list(prec = list(
+    prior = "loggamma",
+    param = c(0.5, 0.31)
+  ))),
+  control.compute = list(config = TRUE, dic = TRUE, waic = TRUE, cpo = TRUE)
+)
+
+fert.inla3$summary.lincomb.derived
+```
+
+# Hypothesis testing {.tabset .tabset-faded}
+
+
+
+
+# Summary figures {.tabset .tabset-faded}
+
+
+# References
+
+                                 
+
