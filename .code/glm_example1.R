@@ -228,6 +228,33 @@ fert.lm %>% emmeans(~FERTILIZER, at = newdata) %>% pairs() %>% summary(infer=TRU
 fert.lm %>% emmeans(pairwise~FERTILIZER, at = newdata)
 ## or with confidence intervals
 fert.lm %>% emmeans(pairwise~FERTILIZER, at = newdata) %>% confint
+## What if we wanted to calculate the percentage increase in yield associated with this change
+## Lets consider what a percentage change is:
+## If a value changed from 15 to 20, what percentage change is this?
+## 20/15 = 1.333 therefore, a 33.3% increase
+## But when working with model parameters, can only work with + -, not * and /
+## To do this in a frequentist model, we need to use a log law trick
+## log(A-B) = log(A)/log(B)
+## So what we need to do is:
+## - take out cell means
+## - log them
+## - subtract them
+## - them back-transform (exp)
+fert.lm %>%
+    emmeans(~FERTILIZER, at = newdata) %>%
+    regrid(transform = "log") %>%
+    pairs() %>%
+    summary(infer = TRUE) %>%
+    mutate(across(c(estimate, lower.CL, upper.CL), exp)) %>%
+    as.data.frame
+## And if we wanted to express it as a decline from FERTILIZER 200 to 100
+fert.lm %>%
+    emmeans(~FERTILIZER, at = newdata) %>%
+    regrid(transform = "log") %>%
+    pairs(reverse = TRUE) %>%
+    summary(infer = TRUE) %>%
+    mutate(across(c(estimate, lower.CL, upper.CL), exp)) %>%
+    as.data.frame
 
 
 ## ----figureModel, results='markdown', eval=TRUE, hidden=TRUE------------------

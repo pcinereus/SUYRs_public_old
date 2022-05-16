@@ -184,6 +184,7 @@ table indicates some of the functions that are helpful for these purposes.
 | `Hmisc::smedian_hilow()`   | median as well as min and max                           |
 | `Hmisc::smean.cl.normal()` | mean as well as lower and upper 95% confidence interval |
 
+
 # References
  
  

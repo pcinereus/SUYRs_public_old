@@ -759,6 +759,33 @@ fert.lm %>% emmeans(~FERTILIZER, at = newdata) %>% pairs() %>% summary(infer=TRU
 fert.lm %>% emmeans(pairwise~FERTILIZER, at = newdata)
 ## or with confidence intervals
 fert.lm %>% emmeans(pairwise~FERTILIZER, at = newdata) %>% confint
+## What if we wanted to calculate the percentage increase in yield associated with this change
+## Lets consider what a percentage change is:
+## If a value changed from 15 to 20, what percentage change is this?
+## 20/15 = 1.333 therefore, a 33.3% increase
+## But when working with model parameters, can only work with + -, not * and /
+## To do this in a frequentist model, we need to use a log law trick
+## log(A-B) = log(A)/log(B)
+## So what we need to do is:
+## - take out cell means
+## - log them
+## - subtract them
+## - them back-transform (exp)
+fert.lm %>%
+    emmeans(~FERTILIZER, at = newdata) %>%
+    regrid(transform = "log") %>%
+    pairs() %>%
+    summary(infer = TRUE) %>%
+    mutate(across(c(estimate, lower.CL, upper.CL), exp)) %>%
+    as.data.frame
+## And if we wanted to express it as a decline from FERTILIZER 200 to 100
+fert.lm %>%
+    emmeans(~FERTILIZER, at = newdata) %>%
+    regrid(transform = "log") %>%
+    pairs(reverse = TRUE) %>%
+    summary(infer = TRUE) %>%
+    mutate(across(c(estimate, lower.CL, upper.CL), exp)) %>%
+    as.data.frame
 ```
 
 ## 
@@ -880,6 +907,26 @@ ggplot(newdata, aes(y = fit, x = FERTILIZER))+
     scale_x_continuous(expression(Fertilizer~concentration~(g.ml^-1)))+
     theme_classic()
 ```
+</div>
+
+<div class='HIDDEN'>
+# Methods 
+
+- The relationship between grass yield and fertiliser concentration
+  was explored using linear regression.
+- The model was validated via DHARMa (cite) residuals
+- All models and graphics were conducted within the R (4.1.0) statistical and
+  graphical environment (cite).
+
+# Results
+
+- Grass yield was found to have a positive linear relationship with
+  fertiliser concentration (stats)
+- Every one unit increase in fertiliser concentration was found to be
+  associated with a 0.8 gram increase in grass yield
+- Doubling the fertiliser concentration from 100 to 200 (units) is
+  expected to increase the yield by x grams
+
 </div>
 # References
  
