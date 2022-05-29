@@ -1,0 +1,250 @@
+---
+title: "GLMM example 6"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../public/resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+ \\\\\\\\\\\\\\\\\\\ fig_caption: yes
+	fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../public/resources/references.bib
+---
+
+```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(tidyverse) #for data wrangling
+```
+
+# Scenario
+
+![fanworms](../public/resources/fanworms.jpg){width="157" height="160"}
+
+In an attempt to understand the effects on marine animals of short-term
+exposure to toxic substances, such as might occur following a spill, or
+a major increase in storm water flows, a it was decided to examine the
+toxicant in question, Copper, as part of a field experiment in Hong
+Kong. The experiment consisted of small sources of Cu (small,
+hemispherical plaster blocks, impregnated with copper), which released
+the metal into sea water over 4 or 5 days. The organism whose response
+to Cu was being measured was a small, polychaete worm, Hydroides, that
+attaches to hard surfaces in the sea, and is one of the first species to
+colonize any surface that is submerged. The biological questions focused
+on whether the timing of exposure to Cu affects the overall abundance of
+these worms. The time period of interest was the first or second week
+after a surface being available.
+
+The experimental setup consisted of sheets of black perspex (settlement
+plates), which provided good surfaces for these worms. Each plate had a
+plaster block bolted to its centre, and the dissolving block would
+create a gradient of [Cu] across the plate. Over the two weeks of the
+experiment, a given plate would have plain plaster blocks (Control) or a
+block containing copper in the first week, followed by a plain block, or
+a plain block in the first week, followed by a dose of copper in the
+second week. After two weeks in the water, plates were removed and
+counted back in the laboratory. Without a clear idea of how sensitive
+these worms are to copper, an effect of the treatments might show up as
+an overall difference in the density of worms across a plate, or it
+could show up as a gradient in abundance across the plate, with a
+different gradient in different treatments. Therefore, on each plate,
+the density of worms (\#/cm^2^) was recorded at each of four distances
+from the center of the plate.
+
+Format of copper.csv data file
+
+COPPER   PLATE   DIST   WORMS   AREA   COUNT
+-------- ------- ------ ------- ------ -------
+..       ..      ..     ..      ..     ..
+
+------------ -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+**COPPER**   Categorical listing of the copper treatment (control = no copper applied, week 2 = copper treatment applied in second week and week 1= copper treatment applied in first week) applied to whole plates. Factor A (between plot factor).
+**PLATE**    Substrate provided for polychaete worm colonization on which copper treatment applied. These are the plots (Factor B). Numbers in this column represent numerical labels given to each plate.
+**DIST**     Categorical listing for the four concentric distances from the center of the plate (source of copper treatment) with 1 being the closest and 4 the furthest. Factor C (within plot factor)
+**WORMS**    Density (\#/cm~2~) of worms measured. Response variable.
+------------ -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+copper = read_csv('../public/data/copper.csv', trim_ws=TRUE)
+glimpse(copper)
+```
+
+
+# Exploratory data analysis
+
+Model formula:
+$$
+y_i \sim{} \mathcal{Pois}(\lambda_i)\\
+ln(\lambda_i) =\boldsymbol{\beta} \bf{X_i} + \boldsymbol{\gamma} \bf{Z_i}
+$$
+
+where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of the fixed and random effects parameters respectively 
+and $\bf{X}$ is the model matrix representing the overall intercept and effects of copper, distance and their interaction on the number of number of worms.
+Area of the place segment was also incorporated as an offset.
+$\bf{Z}$ represents a cell means model matrix for the random intercepts associated with individual plates.
+
+# Fit the model
+
+```{r name, results='markdown', eval=FALSE, hidden=TRUE}
+copper = copper %>% mutate(COPPER=factor(COPPER),
+                           PLATE=factor(PLATE),
+                           DIST=factor(DIST))
+
+ggplot(copper, aes(y=WORMS, x=DIST, fill=COPPER)) +
+  geom_boxplot()
+
+ggplot(copper, aes(y=WORMS, x=DIST, fill=COPPER)) +
+    geom_boxplot() +
+    scale_y_log10()
+
+ggplot(copper, aes(y=WORMS, x=DIST, fill=COPPER)) +
+    geom_boxplot() +
+    scale_y_sqrt()
+
+
+ggplot(copper, aes(y=log(WORMS), x=DIST, fill=COPPER)) +
+    geom_boxplot()
+
+copper.rstan = stan_glmer(I(WORMS+0.5)~COPPER*DIST + (1|PLATE),
+                          data=copper,
+                          family=Gamma(link='log'),
+                          chains = 3, iter = 5000, warmup=1000, thin=5,
+                          prior_intercept = normal(0,1, adjust=FALSE),
+                          prior=normal(0,1,adjust=FALSE),
+                          prior_aux = cauchy(0,2,adjust=FALSE))
+posterior_vs_prior(copper.rstan, color_by='vs', group_by=TRUE, regex_pars=c('^MONTH','^SITUATION','^[sS]igma'), 
+                   facet_args=list(scales='free_y'))
+
+copper.rstan = stan_glmer(I(WORMS+0)~COPPER*DIST + (1|PLATE),
+                          data=copper,
+                          family=gaussian(),
+                          chains = 3, iter = 5000, warmup=1000, thin=5)
+
+copper.rstan1 = stan_glmer(WORMS~COPPER*DIST + (1|PLATE),
+                          data=copper,
+                          family=Gamma(link='log'),
+                          chains = 3, iter = 5000, warmup=1000, thin=5)
+
+copper.rstan = stan_glmer(WORMS~COPPER*DIST + (1|PLATE),
+                          data=copper,
+                          family=gaussian(link='log'),
+                          chains = 3, iter = 5000, warmup=1000, thin=5)
+prior_summary(copper.rstan)
+
+stan_ess(copper.rstan)
+
+newdata = emmeans(copper.rstan1, ~DIST|COPPER, type='response') %>% as.data.frame
+ggplot(newdata, aes(y=response, x=DIST, color=COPPER)) +
+    geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD)) 
+
+
+mullens <- read.csv('../public/data/mullens.csv', strip.white=T)
+head(mullens)
+
+mullens = mullens %>%
+    mutate(pFREQBUC = ifelse(FREQBUC==0, 0.01, FREQBUC/100),
+           BREATH=factor(BREATH),
+           TOAD=factor(TOAD))
+head(mullens)
+
+library(INLA)
+
+mullens.rstan = stan_glmer(pFREQBUC~BREATH*poly(O2LEVEL,3)+(1|TOAD),
+                          data=mullens,
+                          family=mgcv::betar,
+                          chains = 3, warmup=1000,
+                          iter = 2000, thin=3, refresh=0)
+stan_ac(mullens.rstan)
+stan_trace(mullens.rstan)
+stan_ess(mullens.rstan)
+stan_rhat(mullens.rstan)
+
+plot(mullens.rstan)
+
+posterior_vs_prior(mullens.rstan, group_by_parameter = TRUE,
+                   facet_args = list(scales = "free_y"),prob = .95,
+                   pars=nms[wch])
+
+nms = colnames(as.matrix(mullens.rstan))
+wch = grep("", nms)
+
+tidyMCMC(mullens.stan$stanfit, conf.int=TRUE,conf.method='HPDinterval',rhat=TRUE,ess=TRUE)
+g=ggpredict(mullens.stan) %>% plot
+do.call('grid.arrange', g)
+
+
+mullens.grid = with(mullens, list(O2LEVEL = seq(min(O2LEVEL),max(O2LEVEL), len=100)))
+emmeans(mullens.rstan, ~BREATH|O2LEVEL, at=mullens.grid)
+
+emmeans(mullens.rstan, ~BREATH
+        ggemmeans(mullens.stan, ~BREATH|O2LEVEL) %>% plot
+
+
+
+newdata = with(mullens, expand.grid(BREATH=levels(BREATH),
+              O2LEVEL = seq(min(O2LEVEL), max(O2LEVEL), len=100)))
+colnames(as.matrix(mullens.stan))
+nms=colnames(as.matrix(mullens.stan))
+wch=grep('^.Intercept|^BREATH|^poly',nms)
+wch
+
+coefs = as.matrix(mullens.stan)[,nms[wch]]
+colMeans(coefs)
+head(coefs)
+
+Xmat = model.matrix(~BREATH*poly(O2LEVEL,3), data=newdata)
+colMeans(Xmat)
+
+fit = binomial()$linkinv(coefs %*% t(Xmat))
+colMeans(fit) %>% head
+                                        #fit = binomial()$linkinv(posterior_linpred(mullens.stan, newdata=newdata, re.form=~0))
+#fit = posterior_linpred(mullens.stan, newdata=newdata, re.form=~0, transform=TRUE)
+newdata = newdata %>% cbind(tidyMCMC(fit, conf.int=TRUE,
+    conf.method = 'HPDinterval'))
+ggplot(newdata, aes(y=estimate, x=O2LEVEL)) +
+    geom_ribbon(aes(ymin=conf.low, ymax=conf.high, fill=BREATH),alpha=0.2) + 
+        geom_line(aes(color=BREATH))
+
+tidyMCMC(mullens.stan$stanfit, conf.int=TRUE,conf.method='HPDinterval',
+         rhat=TRUE,ess=TRUE)
+bayes_R2(mullens.rstan, re.form=NA) %>% median_hdi
+bayes_R2(mullens.rstan, re.form=~(1|TOAD)) %>% median_hdi
+```

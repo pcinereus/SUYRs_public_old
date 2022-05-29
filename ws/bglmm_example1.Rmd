@@ -1,0 +1,210 @@
+---
+title: "Bayesian GLMM Part1"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../resources/references.bib
+---
+
+```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(rstanarm)   #for fitting models in STAN
+library(brms)       #for fitting models in STAN
+library(coda)       #for diagnostics
+library(bayesplot)  #for diagnostics
+library(ggmcmc)     #for MCMC diagnostics
+library(rstan)      #for interfacing with STAN
+library(emmeans)    #for marginal means etc
+library(broom)      #for tidying outputs
+library(DHARMa)     #for residual diagnostics
+library(tidybayes)  #for more tidying outputs
+library(ggeffects)  #for partial plots
+library(broom.mixed)#for tidying MCMC outputs
+library(tidyverse)  #for data wrangling etc
+library(patchwork)  #for multiple plots
+```
+
+# Scenario
+
+A plant pathologist wanted to examine the effects of two different strengths of tobacco virus on the number of lesions on tobacco leaves.  She knew from pilot studies that leaves were inherently very variable in response to the virus.  In an attempt to account for this leaf to leaf variability, both treatments were applied to each leaf.  Eight individual leaves were divided in half, with half of each leaf inoculated with weak strength virus and the other half inoculated with strong virus.  So the leaves were blocks and each treatment was represented once in each block.  A completely randomised design would have had 16 leaves, with 8 whole leaves randomly allocated to each treatment.  
+
+![Tobacco plant](../resources/TobaccoPlant.jpg){height="300"}
+
+Format of tobacco.csv data files
+
+LEAF   TREAT    NUMBER
+------ -------- --------
+1      Strong   35.898
+1      Week     25.02
+2      Strong   34.118
+2      Week     23.167
+3      Strong   35.702
+3      Week     24.122
+\...   \...     \...
+
+------------ ----------------------------------------------------------------------------------------------------
+**LEAF**     The blocking factor - Factor B
+**TREAT**    Categorical representation of the strength of the tobacco virus - main factor of interest Factor A
+**NUMBER**   Number of lesions on that part of the tobacco leaf - response variable
+------------ ----------------------------------------------------------------------------------------------------
+
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+tobacco <- read_csv('../data/tobacco.csv', trim_ws = TRUE)
+tobacco %>% glimpse()
+```
+
+# Exploratory data analysis
+
+
+Model formula:
+$$
+y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
+\mu_i =\bf{X_i}\boldsymbol{\beta} + \bf{Z_i}\boldsymbol{\gamma} \\
+\beta_0 \sim{} \mathcal{N}(35, 20)\\
+\beta_1 \sim{} \mathcal{N}(0, 10)\\
+\boldsymbol{\gamma} \sim{} \mathcal{N}(0, \boldsymbol{\Sigma})\\
+\boldsymbol{\Sigma} = \boldsymbol{D}({\sigma_l})\boldsymbol{\Omega}\boldsymbol{D}({\sigma_l})\\
+\boldsymbol{\Omega} \sim{} LKJ(\zeta)\\
+\sigma_j^2 \sim{} \\mathcal{Cauchy}(0,5)\
+\sigma^2 \sim{} Gamma(2,1)\
+$$
+
+where:
+
+- $\bf{X}$ is the model matrix representing the overall intercept and
+  effects of the treatment on the number of lesions.
+- $\boldsymbol{\beta}$ is a vector of the population-level effects
+  parameters to be estimated.
+- $\boldsymbol{\gamma}$ is a vector of the group-level effect parameters
+- $\bf{Z}$ represents a cell means model matrix for the random intercepts (and
+  possibly random slopes) associated with leaves.
+- the population-level intercept ($\beta_0$) has a gaussian prior with location
+  of 31 and scale of 10
+- the population-level effect ($\beta_1$) has a gaussian prior with location of
+  0 and scale of 10
+- the group-level effects are assumed to sum-to-zero and be drawn from a
+  gaussian distribution with mean of 0 and covariance of $\Sigma$  
+- $\boldsymbol{\Sigma}$ is the variance-covariance matrix between the
+  groups (individual leaves).  It turns out that it is difficult to
+  apply a prior on this covariance matrix, so instead, the covariance
+  matrix is decomposed into a correlation matrix
+  ($\boldsymbol{\Omega}$) and a vector of variances
+  ($\boldsymbol{\sigma_l}$) which are the diagonals ($\boldsymbol{D}$)
+  of the covariance matrix.
+- $\boldsymbol{\Omega}$ 
+$$
+\gamma \sim{} N(0,\Sigma)\\
+\Sigma -> \Omega, \tau\\
+$$
+where $\Sigma$ is a covariance matrix.
+
+It turns out that it is difficult to apply a prior on a covariance matrix, so
+instead, we decompose the covariance matrix into a correlation matrix and variance.
+
+https://jrnold.github.io/bayesian_notes/appendix.html - 20.15.3 Covariance-Correlation Matrix Decomposition
+
+- Covariance matrix can be decomposed into a correlation matrix and a vector of
+  variances
+- The variances can be further decomposed into the product of a
+  simplex vector (which is a probability vector, non-negative and sums
+  to 1) and the trace (product of the order of the matrix and the
+  scale of the scale parameter, also the sum of its diagonal elements)
+  of a matrix.  Each element of the simplex vector represents the
+  proportion of the trace that is attributable to the corresponding
+  variable.
+- A prior on all the above is a decov (decomposition of covariance) function
+
+- The prior on the correlation matrix is called LKJ
+- density is proportional to the determinant of the correlation matrix raised to
+  the power of the positive regularization paramter minus one.
+
+- The prior on the simplex vector is a symmetric Dirichlet prior which
+  has a single (positive) concentration parameter (default of 1
+  implying the prior is jointly uniform over the same of simplex
+  vectors of that size) A symmetric Dirichlet prior is used for the
+  simplex vector.  The Dirichlet prior has a single (positive)
+  concentration parameter
+
+- The positive scale paramter has a gamma prior (with default shape
+  and scale of 1 - implying a unit-exponential distribution)
+
+- alternatively, the lkj prior can be used for covariance.
+- as with decov, it decomposes into correlation and variances, however the
+  variances are not further decomosed into a simplex vector and trace.
+- instead the standard deviations (variance squared) for each of the group
+  specific paramters are given half student-t distribution with scale and df
+  paramters specified through the scale (default 10) and df (default 1)
+  arguments of the lkj function.
+- the lkj prior is similar, yet faster than decov
+
+# Fit the model {.tabset .tabset-faded}
+
+
+
+# MCMC sampling diagnostics {.tabset .tabset-faded}
+
+
+
+# Model validation {.tabset .tabset-faded}
+
+
+
+
+# Partial effects plots {.tabset .tabset-faded}
+
+
+
+# Model investigation {.tabset .tabset-faded}
+
+
+
+# Further investigations {.tabset .tabset-faded}
+
+
+
+# References
