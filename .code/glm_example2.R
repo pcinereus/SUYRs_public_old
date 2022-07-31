@@ -133,6 +133,7 @@ polis.glm %>% summary()
 
 
 ## ----summaryModel2d, results='markdown', echo=FALSE, eval=FALSE, hidden=TRUE----
+## coef(polis.glm)[1] %>% plogis()
 ## exp(coef(polis.glm))
 ## polis.glm %>% coef %>% exp
 ## ##odd ratio - ratio of change in probability of present to absent for
@@ -175,12 +176,21 @@ polis.glm %>% sjPlot::tab_model(show.se=TRUE,show.aic=TRUE)
 
 ## ----predictModel1a, results='markdown', eval=TRUE, hidden=TRUE---------------
 #R2 for binomial outcomes
+## This is the squared difference of the average of the predicted probs for outcomes of 0 and
+## the average predicted probs for outcomes of 1
+## Coefficient of descrimination
 polis.glm %>% performance::r2_tjur()
 #R2 for binomial outcomes
 polis.glm %>% r2()
 
 ## Likelihood ratio based
 polis.glm %>% MuMIn::r.squaredLR()
+
+## Correlation based
+augment(polis.glm) %>% mutate(Fit = plogis(.fitted)) %>% summarise(Cor = cor(PA, Fit)^2)
+
+## Improvement
+deviance(polis.glm)/polis.glm$null
 
 
 ## ----predictModel2, results='markdown', eval=TRUE, hidden=TRUE----------------

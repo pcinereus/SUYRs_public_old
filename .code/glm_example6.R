@@ -29,7 +29,9 @@ summary(quinn)
 
 
 ## ----dataprep, results='markdown', eval=TRUE, hidden=TRUE---------------------
-quinn = quinn %>% mutate(SEASON = factor(SEASON, levels=c('Spring', 'Summer', 'Autumn', 'Winter')),
+quinn = quinn %>%
+    mutate(SEASON = factor(SEASON,
+                           levels=c('Spring', 'Summer', 'Autumn', 'Winter')),
                          DENSITY = factor(DENSITY))
 
 
@@ -231,6 +233,12 @@ quinn.zip %>% summary()
 exp(-3.0037)
 
 ## quinn.zip1 <- zeroinfl(RECRUITS ~ DENSITY*SEASON | SEASON, data=quinn,  dist='poisson')
+quinn.zip <- glmmTMB(RECRUITS ~ DENSITY*SEASON, zi=~1, data=quinn,  family=poisson())
+summary(quinn.zip)
+quinn.resid <- quinn.zip %>% simulateResiduals(plot=TRUE)
+quinn.resid %>% testZeroInflation()
+quinn.resid %>% testDispersion()
+
 quinn.zip1 <- glmmTMB(RECRUITS ~ DENSITY*SEASON, zi=~SEASON, data=quinn,  family=poisson())
 quinn.resid <- quinn.zip1 %>% simulateResiduals(plot=TRUE)
 

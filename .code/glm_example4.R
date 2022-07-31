@@ -144,6 +144,17 @@ loyn.resid2 <- loyn.glm2 %>% simulateResiduals(plot=TRUE)
 
 
 ## ----validateModel5a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=9, fig.height=6, warning=FALSE, message=FALSE----
+loyn.glm %>%
+    augment(loyn) %>%
+    ggplot() +
+    geom_point(aes(y=.std.resid, x= log(AREA)))
+## OR with simulated residuals
+loyn = loyn %>%
+  mutate(Resids = loyn.resid$scaledResiduals)
+
+ggplot(loyn) +
+    geom_point(aes(y=Resids, x= log(AREA)))
+# OR for all at once
 loyn = loyn %>%
   mutate(Resids = loyn.resid$scaledResiduals)
 
@@ -162,6 +173,17 @@ loyn %>%
 
 
 ## ----validateModel5b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=9, fig.height=6, warning=FALSE, message=FALSE----
+loyn.glm1 %>%
+    augment(loyn) %>%
+    ggplot() +
+    geom_point(aes(y=.std.resid, x= log(AREA)))
+## OR with simulated residuals
+loyn = loyn %>%
+  mutate(Resids = loyn.resid1$scaledResiduals)
+
+ggplot(loyn) +
+    geom_point(aes(y=Resids, x= log(AREA)))
+# OR for all at once
 loyn = loyn %>%
   mutate(Resids = loyn.resid1$scaledResiduals)
 
@@ -180,6 +202,17 @@ loyn %>%
 
 
 ## ----validateModel5c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=9, fig.height=6, warning=FALSE, message=FALSE----
+loyn.glm2 %>%
+    augment(loyn) %>%
+    ggplot() +
+    geom_point(aes(y=.std.resid, x= log(AREA)))
+## OR with simulated residuals
+loyn = loyn %>%
+  mutate(Resids = loyn.resid2$scaledResiduals)
+
+ggplot(loyn) +
+    geom_point(aes(y=Resids, x= log(AREA)))
+## OR for all at once
 loyn = loyn %>%
   mutate(Resids = loyn.resid2$scaledResiduals)
 
@@ -272,6 +305,8 @@ loyn.glm %>% ggpredict() %>%
 
 
 ## ----plotModel3d2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, message=FALSE, warning=FALSE----
+loyn.glm1 %>% ggpredict() %>%
+  plot(add.data=TRUE, facet=TRUE, jitter=FALSE)
 loyn.glm1 %>% ggpredict() %>%
   plot(add.data=TRUE, facet=TRUE, jitter=FALSE)
 
@@ -424,11 +459,13 @@ loyn.glm1b %>% summary()
 
 ## ----emmtrends, results='markdown', eval=TRUE---------------------------------
 loyn.glm1b %>% emtrends(pairwise~fGRAZE, var='log(AREA)')
+## loyn.glm1b %>% emtrends(~fGRAZE, var='log(AREA)') %>% pairs()
 loyn.glm1b %>% emtrends(pairwise~fGRAZE, var='AREA')
 
 
 ## ----emeans, results='markdown', eval=TRUE------------------------------------
-loyn.glm1b %>% emmeans(pairwise~fGRAZE)
+loyn.glm1b %>% emmeans(~fGRAZE, type = 'link') %>% pairs() %>% regrid() %>% summary(infer = TRUE)
+loyn.glm1b %>% emmeans(~fGRAZE, type = 'link') %>% regrid() %>% pairs() %>% summary(infer = TRUE)
 
 
 ## ----figureModel, results='markdown', eval=TRUE, hidden=TRUE------------------
