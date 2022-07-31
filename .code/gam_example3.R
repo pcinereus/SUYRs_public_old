@@ -54,6 +54,7 @@ wq=wq %>% mutate(Dt.num=decimal_date(Date))
 
 ## ----model1a, results='markdown', eval=TRUE, hidden=TRUE----------------------
 wq.pandora=wq %>% filter(reef.alias=='Pandora', !is.na(NOx))
+#wq.pandora=wq %>% filter(reef.alias=='Green', !is.na(NOx))
 
 ggplot(wq.pandora, aes(y=NOx, x=Date)) + geom_point() +
     geom_smooth() +
@@ -473,9 +474,10 @@ tidy(wq.gamm3c) %>% knitr::kable()
 
 
 ## ----furtherAnalyses1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5----
-emmeans(wq.gamm3c,  pairwise~Dt.num,  at=list(Dt.num=c(2016, 2014)),
+emmeans(wq.gamm3c,  ~Dt.num,  at=list(Dt.num=c(2016, 2014)),
         type='response') %>%
-  confint
+    pairs() %>%
+    confint()
 
 
 ## ----furtherAnalyses1a1, results='markdown', eval=TRUE, echo=FALSE, hidden=TRUE, fig.width=5, fig.height=5----
@@ -483,9 +485,10 @@ wq.emmeans <- emmeans(wq.gamm3c,  pairwise~Dt.num,  at=list(Dt.num=c(2016, 2014)
 
 
 ## ----furtherAnalyses1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5----
-emmeans(wq.gamm3c,  pairwise~Dt.num|Region,  at=list(Dt.num=c(2016, 2014)),
+emmeans(wq.gamm3c,  ~Dt.num|Region,  at=list(Dt.num=c(2016, 2014)),
         type='response') %>%
-  confint
+    pairs() %>%
+    confint
 
 
 ## ----furtherAnalyses1b1, results='markdown', eval=TRUE, echo=FALSE, hidden=TRUE, fig.width=5, fig.height=5----

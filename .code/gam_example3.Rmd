@@ -218,6 +218,7 @@ mixed effects model.
 
 ```{r model1a, results='markdown', eval=TRUE, hidden=TRUE}
 wq.pandora=wq %>% filter(reef.alias=='Pandora', !is.na(NOx))
+#wq.pandora=wq %>% filter(reef.alias=='Green', !is.na(NOx))
 
 ggplot(wq.pandora, aes(y=NOx, x=Date)) + geom_point() +
     geom_smooth() +
@@ -946,6 +947,7 @@ appraise(wq.gamm3b)
 **Conclusions:**
 
 - the k-index and p-value (for both the long-term and seasonal trend) are low,
+
   and the edf's are approaching the respective k' so it is likely that the
   number of knots is not overconstraining
 - the residual diagnostics are not too bad
@@ -1079,9 +1081,10 @@ of this decline (between 2014 and 2016).
 Marginalising over Regions, this is:
 
 ```{r furtherAnalyses1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-emmeans(wq.gamm3c,  pairwise~Dt.num,  at=list(Dt.num=c(2016, 2014)),
+emmeans(wq.gamm3c,  ~Dt.num,  at=list(Dt.num=c(2016, 2014)),
         type='response') %>%
-  confint
+    pairs() %>%
+    confint()
 ```
 
 ```{r furtherAnalyses1a1, results='markdown', eval=TRUE, echo=FALSE, hidden=TRUE, fig.width=5, fig.height=5}
@@ -1098,9 +1101,10 @@ wq.emmeans <- emmeans(wq.gamm3c,  pairwise~Dt.num,  at=list(Dt.num=c(2016, 2014)
 Alternatively, we could exlore the same declines for each Region.
 
 ```{r furtherAnalyses1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-emmeans(wq.gamm3c,  pairwise~Dt.num|Region,  at=list(Dt.num=c(2016, 2014)),
+emmeans(wq.gamm3c,  ~Dt.num|Region,  at=list(Dt.num=c(2016, 2014)),
         type='response') %>%
-  confint
+    pairs() %>%
+    confint
 ```
 
 ```{r furtherAnalyses1b1, results='markdown', eval=TRUE, echo=FALSE, hidden=TRUE, fig.width=5, fig.height=5}
