@@ -30,7 +30,6 @@ output:
     fig_width: 4
     highlight: tango
     toc: yes
-    toc_depth: 2
 output_dir: "docs"
 documentclass: article
 fontsize: 12pt
@@ -40,7 +39,7 @@ monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../public/resources/references.bib
 ---
- 
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
 ```
@@ -69,11 +68,18 @@ library(posterior)  #for posterior draws
 library(ggeffects)  #for partial effects plots
 library(patchwork)  #for multi-panel figures
 theme_set(theme_grey()) #put the default ggplot theme back
+source('helperFunctions.R')
 ```
 
 # Scenario
 
-Here is an example from @Fowler-1998-1998. An agriculturalist was interested in the effects of fertilizer load on the yield of grass.  Grass seed was sown uniformly over an area and different quantities of commercial fertilizer were applied to each of ten 1 m<sup>2</sup> randomly located plots.  Two months later the grass from each plot was harvested, dried and weighed.  The data are in the file **fertilizer.csv** in the **data** folder.
+Here is an example from @Fowler-1998-1998. An agriculturalist was
+interested in the effects of fertilizer load on the yield of grass.
+Grass seed was sown uniformly over an area and different quantities of
+commercial fertilizer were applied to each of ten 1 m<sup>2</sup>
+randomly located plots.  Two months later the grass from each plot was
+harvested, dried and weighed.  The data are in the file
+**fertilizer.csv** in the **data** folder.
 
 ![](../public/resources/turf.jpg){width=70%}
 
@@ -108,12 +114,12 @@ glimpse(fert)
 ```
 
 # Exploratory data analysis
-
+ 
 <div class='HIDDEN'> The individual responses ($y_i$, observed yields) are each
 expected to have been **independently** drawn from normal (**Gaussian**)
 distributions ($\mathcal{N}$). These distributions represent all the possible
-yields we could have obtained at the specific ($i^th$) level of Fertilizer.
-Hence the $i^th$ yield observation is expected to have been drawn from a normal
+yields we could have obtained at the specific ($i^{th}$) level of Fertilizer.
+Hence the $i^{th}$ yield observation is expected to have been drawn from a normal
 distribution with a mean of $\mu_i$.
 
 Although each distribution is expected to come from populations that differ in
@@ -129,10 +135,10 @@ as well as numerically awkward.
 
 As a starting point, lets assign the following priors:
 
-- $\beta_0$: Normal prior centred at 0 with a variance of 100
-- $\beta_1$: Normal prior centred at 0 with a variance of 10
-- $\sigma$: either a half cauchy centred at 0 with a variance of 5 or an
-  exponential with parameter of 1
+- $\beta_0$: Normal prior centred at 164 with a variance of 65
+- $\beta_1$: Normal prior centred at 0 with a variance of 1
+- $\sigma$: either a half cauchy centred at 0 with a variance of 2 or an
+  exponential with parameter of 0.016
 
 Note, when fitting models through either `rstanarm` or `brms`, the priors assume
 that the predictor(s) have been centred and are to be applied on the link
@@ -145,11 +151,11 @@ $$
 \begin{align}
 y_i &\sim{} \mathcal{N}(\mu_i, \sigma^2)\\
 \mu_i &= \beta_0 + \beta_1 x_i\\
-\beta_0 &\sim{} \mathcal{N}(0,100)\\
-\beta_1 &\sim{} \mathcal{N}(0,10)\\
-\sigma &\sim{} \mathcal{cauchy}(0,5)\\
+\beta_0 &\sim{} \mathcal{N}(164,65)\\
+\beta_1 &\sim{} \mathcal{N}(0,1)\\
+\sigma &\sim{} \mathcal{cauchy}(0,2)\\
 OR\\
-\sigma &\sim{} \mathcal{Exp}(1)\\
+\sigma &\sim{} \mathcal{Exp}(0.016)\\
 OR\\
 \sigma &\sim{} \mathcal{gamma}(2,1)\\
 \end{align}
@@ -232,7 +238,30 @@ same into the future.
 prior_summary(fert.rstanarm)
 ```
 
-This tells us:
+Note, consistent with good practice, `rstanarm` will centre all
+categorical predictors (whether the user centres them or not).  Whilst
+this does not impact on estimated slope(s), it does alter the
+intercept (arguably for the better).  Since all priors are applied on
+the scale of the parameters in the linear predictor (e.g. the
+intercept and slopes), the prior on intercept must be defined as if
+the predictors have been centred.
+
+Nevertheless, `rstanarm` will return a posterior for intercept that is
+consistent with how the user had defined the linear predictor - that
+is, if the user does not centre the predictors, then `rstanarm` will
+return the intercept posterior on a scale consistent with as if the
+predictors had not been centred, even though they were automatically
+scaled internally.
+
+When defining the spread of priors, `rstanarm` prefers to do so
+relative to the scaling of the data.  For example, for the slope, it
+takes the ratio of the standard deviations of the response and the
+predictor and multiplies them by a factor of 2.5 (by default).  Hence
+it is possible to define priors either in relative terms (by providing
+a scaling factor) or in absolute terms, by providing the desired
+priors along with the `autoscale = FALSE` _argument_.
+
+The above prior summary tells us:
 
 - for the intercept, it is using a normal prior with a mean of 164 and a
   standard deviation of 2.5.  This mean value is based on the mean of the
@@ -264,7 +293,7 @@ standard deviation of the response to the standard deviation of the predictor
    standard deviation of the response.
    
 ```{r fitModel1e, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
-1/sd(fert$FERTILIZER)
+1/sd(fert$YIELD)
 ```
 
 ### Assessing priors
@@ -314,15 +343,26 @@ If we wanted to define our own priors that were less vague, yet still not likely
 to bias the outcomes, we could try the following priors (mainly plucked out of
 thin air):
 
-- $\beta_0$: normal centred at 164 with a standard deviation of 10
-- $\beta_1$: normal centred at 0 with a standard deviation of 0.75
+- $\beta_0$: normal centred at 164 with a standard deviation of 65
+- $\beta_1$: normal centred at 0 with a standard deviation of 1
 - $\sigma$: half-cauchy centred at 0 with a standard deviation of 2
+
+We can visualise each of the above as:
+
+```{r fitModel1h1, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE, fig.width = 5, fig.height = 3}
+standist::visualize("normal(164, 65)", xlim = c(0, 300)) 
+standist::visualize("normal(0, 1)", xlim = c(-10, 10))
+standist::visualize("cauchy(0, 2)",
+                    "gamma(2,1)",
+                    "exponential(0.016)",
+                    xlim = c(-10, 50))
+```
 
 I will also overlay the raw data for comparison.
 
 ```{r fitModel1h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
 fert.rstanarm2= stan_glm(YIELD ~ FERTILIZER, data=fert,
-                         prior_intercept = normal(164, 10, autoscale=FALSE),
+                         prior_intercept = normal(164, 65, autoscale=FALSE),
                          prior = normal(0, 1, autoscale=FALSE),
                          prior_aux = cauchy(0, 2, autoscale=FALSE),
                          prior_PD=TRUE, 
@@ -536,14 +576,14 @@ If we wanted to define our own priors that were less vague, yet still
 not likely to bias the outcomes, we could try the following priors
 (which I have mainly plucked out of thin air):
 
-- $\beta_0$: normal centred at 164 with a standard deviation of 10
+- $\beta_0$: normal centred at 164 with a standard deviation of 65
 - $\beta_1$: normal centred at 0 with a standard deviation of 1
 - $\sigma$: half-cauchy centred at 0 with a standard deviation of 2
 - $\sigma$: gamma with shape parameters of 2 and 1
 
 
 ```{r priors, results='markdown', eval=TRUE}
-standist::visualize("normal(164, 10)", xlim = c(-100, 300))
+standist::visualize("normal(164, 65)", xlim = c(-100, 300))
 standist::visualize("normal(0, 1)", xlim = c(-10, 10))
 standist::visualize("cauchy(0, 2)", xlim = c(-10, 10))
 standist::visualize("gamma(2, 1)", xlim = c(0, 10))
@@ -559,7 +599,7 @@ standist::visualize(
 I will also overlay the raw data for comparison.
 
 ```{r fitModel2h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
-priors <- prior(normal(164, 10),  class='Intercept') +
+priors <- prior(normal(164, 65),  class='Intercept') +
     prior(normal(0, 1), class='b') +
     prior(gamma(2, 1),  class='sigma')
 
@@ -569,12 +609,16 @@ fert.brm2 = brm(bf(YIELD ~ FERTILIZER),
                 sample_prior = 'only', 
                 iter = 5000,
                 warmup = 1000,
-                chains = 3,
+                chains = 3, cores = 3,
                 thin = 5,
                 refresh = 0)
 ```
 
 ```{r fitModel2i, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
+fert.brm2 %>%
+    ggpredict() %>%
+    plot(add.data=TRUE)
+#OR
 fert.brm2 %>%
     ggemmeans(~FERTILIZER) %>%
     plot(add.data = TRUE)
@@ -586,15 +630,20 @@ fert.brm2 %>%
 
 ```{r fitModel2j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
 fert.brm3 <- update(fert.brm2, sample_prior = 'yes', refresh = 0)
+#OR
 fert.brm3 = brm(bf(YIELD ~ FERTILIZER),
                 data=fert,
                 prior=priors,
                 sample_prior = 'yes', 
                 iter = 5000,
                 warmup = 1000,
-                chains = 3,
+                chains = 3, cores = 3,
                 thin = 5,
                 refresh = 0)
+```
+
+```{r fitModel2j2, results='markdown', eval=TRUE, echo = FALSE, hidden=TRUE}
+save(fert.brm3, file = '../ws/testing/fert.brm3.RData')
 ```
 
 ### Plotting prior and posterior
@@ -625,18 +674,9 @@ continuous predictors (predictors are centred behind the scenes).
 Since we did not centre the predictor, the intercept returned is as if
 uncentred.  Hence, the prior and posterior are on different scales.
  
-```{r fitModel2k, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
+```{r fitModel2k, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE, fig.width = 8, fig.height = 4}
 fert.brm3 %>% get_variables()
-fert.brm3 %>%
-  posterior_samples %>%
-  select(-`lp__`) %>%
-  pivot_longer(cols=everything(), names_to='key', values_to='value') %>% 
-  mutate(Type=ifelse(str_detect(key, 'prior'), 'Prior', 'b'),
-         Class=ifelse(str_detect(key, 'Intercept'),  'Intercept',
-               ifelse(str_detect(key, 'sigma'),  'Sigma',  'b'))) %>%
-  ggplot(aes(x=Type,  y=value)) +
-  stat_pointinterval()+
-  facet_wrap(~Class,  scales='free')
+fert.brm3 %>% SUYR_prior_and_posterior() 
 ```
 
 ### Exploring the stan code
@@ -873,8 +913,12 @@ It is clear that the two models yeild very similar parameter estimates.
 
 ### Plotting prior vs posterior
 
+Note, the following will not appear in this tutorial as 
+the INLA plotting function has been really awkwardly written
+and is not compatible with Rmd.
+
 ```{r fitModel3d0, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
-print(plot(fert.inla1,
+plot(fert.inla1,
      plot.fixed.effects = TRUE,
      plot.lincomb = FALSE,
      plot.random.effects = FALSE,
@@ -882,14 +926,24 @@ print(plot(fert.inla1,
      plot.predictor = FALSE,
      plot.q = FALSE,
      plot.cpo = FALSE,
-     plot.prior = TRUE))
+     plot.prior = TRUE,
+     single = FALSE)
 ```
 
-```{r fitModel3d1, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
+```{r fitModel3d1, results='markdown', eval=TRUE, hidden=TRUE, fig.width = 6, fig.height = 3, cache=FALSE}
 library(INLAutils)
 plot_fixed_marginals(fert.inla1, priors = TRUE)
 ```
+```{r fitModel3d1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width = 3, fig.height = 3, cache=FALSE}
+library(INLAutils)
+plot_hyper_marginals(fert.inla1, CI = TRUE)
+```
+Or the effects as a single figure..
 
+```{r fitModel3d1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width = 6, fig.height = 6, cache=FALSE}
+library(INLAutils)
+autoplot(fert.inla1)
+```
 
 ```{r fitModel3d2, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE, fig.width=8}
 marg.fix <- fert.inla1$marginals.fixed
@@ -1014,7 +1068,7 @@ Of these, we will focus on:
 ```{r modelValidation1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4}
 plot(fert.rstanarm3, plotfun='mcmc_trace')
 ```
-  
+   
    The chains appear well mixed and very similar
    
 - acf (autocorrelation function): plots the autocorrelation between successive
@@ -1132,7 +1186,7 @@ Of these, we will focus on:
   parameter should look the same (i.e, should not be displaced above or below
   any other trace for that parameter).
 
-```{r modelValidation1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4}
+```{r modelValidation1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=9}
 fert.ggs <- ggs(fert.rstanarm3)
 ggs_traceplot(fert.ggs)
 ```
@@ -1392,7 +1446,37 @@ fert.ggs %>% ggs_grb()
 
 ## INLA
 
-This is not relevant for `INLA`
+The sampling diagnostics are not relevant to INLA.
+Instead, we can focus on CPO and PIT
+
+```{r fitModel3d1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width = 6, fig.height = 6, cache=FALSE}
+fert.inla1.cpo <- data.frame(cpo = fert.inla1$cpo$cpo,
+           pit = fert.inla1$cpo$pit,
+           failure = fert.inla1$cpo$failure) %>%
+    filter(failure == 0) %>%
+    mutate(row = 1:n())
+
+g1 <- fert.inla1.cpo %>%
+    ggplot(aes(y = cpo, x = row)) +
+    geom_point()
+g2 <- fert.inla1.cpo %>%
+    ggplot(aes(x = cpo)) +
+    geom_histogram()
+g3 <- fert.inla1.cpo %>%
+    ggplot(aes(y = pit, x = row)) +
+    geom_point()
+g4 <- fert.inla1.cpo %>%
+    ggplot(aes(x = pit)) +
+    geom_histogram()
+
+(g1 + g2)/(g3 + g4)
+```
+
+Ideally, we want to see that no CPO or PIT is very different in value
+from any others (not the case here) and that the histograms are
+relatively flat (which they kind of are here - particularly
+considering the small amount of data).
+
 
 </div>
 # Model validation {.tabset .tabset-faded}
@@ -1428,7 +1512,7 @@ available_ppc()
 - dens_overlay: plots the density distribution of the observed data (black line)
 overlayed on top of 50 density distributions generated from draws from the model
 (light blue).  Ideally, the 50 realisations should be roughly consistent with
-the observed data.
+the observed data. 
 
 ```{r modelValidation3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4}
 pp_check(fert.rstanarm3,  plotfun='dens_overlay')
@@ -1578,7 +1662,7 @@ We need to supply:
 - fitted (predicted) responses (averaged) associated with each observation
 
 ```{r modelValidation6a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
-preds <- fert.brm3 %>% posterior_predict(nsamples=250,  summary=FALSE)
+preds <- fert.brm3 %>% posterior_predict(ndraws=250,  summary=FALSE)
 fert.resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = fert$YIELD,
                             fittedPredictedResponse = apply(preds, 2, median),
@@ -1640,7 +1724,11 @@ fit).
   clearer whether or not any of the values are 'small' (all values
   must be between 0 and 1). A histogram of PIT values that does not
   look approximately uniform (flat) indicates a lack of model fit.
-  ```{r fitModel3e3, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
+  
+  Unfortunately, the following will not work inside of an Rmarkdown
+  (but will work fine on the console)
+  
+  ```{r fitModel3e3, results='markdown', eval=TRUE, hidden=FALSE, cache=FALSE}
   plot(fert.inla1,
        plot.fixed.effects = FALSE,
        plot.lincomb = FALSE,
@@ -1649,10 +1737,18 @@ fit).
        plot.predictor = FALSE,
        plot.q = FALSE,
        plot.cpo = TRUE,
-       plot.prior = FALSE)
+       plot.prior = FALSE) 
   ```
   In this case the PIT values do not appear to deviate from a uniform
   distribution and thus do not indicate a lack of fit.
+
+```{r fitModel3d1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width = 6, fig.height = 6, cache=FALSE}
+```
+
+Ideally, we want to see that no CPO or PIT is very different in value
+from any others (not the case here) and that the histograms are
+relatively flat (which they kind of are here - particularly
+considering the small amount of data).
 
 In the following, the top left is the distribution of residuals and
 top right is the observed vs predicted values.
@@ -1764,7 +1860,9 @@ fert.rstanarm3 %>% fitted_draws(newdata=fert) %>%
 fert.brm3 %>% ggemmeans(~FERTILIZER) %>% plot(add.data = TRUE) 
 fert.brm3 %>% conditional_effects() 
 fert.brm3 %>% conditional_effects() %>% plot(points = TRUE)
-fert.brm3 %>% conditional_effects(spaghetti = TRUE, nsamples = 200) %>% plot(points = TRUE) 
+fert.brm3 %>%
+    conditional_effects(spaghetti = TRUE, ndraws = 200) %>%
+    plot(points = TRUE) 
 ```
 
 ### ggpredict
@@ -2333,7 +2431,6 @@ mcmcpvalue <- function(samp)
 mcmcpvalue(as.matrix(fert.brm3)[, c("b_FERTILIZER")])
 ```
 
-</div>
 
 
 
@@ -2513,6 +2610,7 @@ cor(fert.inla1$summary.fitted.values[,'mean'],
 ```
 
 
+</div>
 
 # Predictions {.tabset .tabset-faded}
 
@@ -2710,7 +2808,6 @@ fit %>% median_hdci %>% bind_cols(newdata)
 ```
 
 
-</div>
 
 
 
@@ -2838,6 +2935,8 @@ fert.inla3 <- inla(YIELD ~ FERTILIZER,
 fert.inla3$summary.lincomb.derived
 ```
 
+</div>
+
 # Hypothesis testing {.tabset .tabset-faded}
 
 <div class='HIDDEN'>
@@ -2883,7 +2982,7 @@ fert.rstanarm3 %>% tidy_draws() %>% summarise(P=sum(FERTILIZER>0)/n())
 - the probability of a positive effect of Fertilizer on grass Yield is 1.  That
   is, there is, we are 100% confident that there is an effect.
 
-### Change 100 to 200
+### Change 100 to 200 (Method 1)
 
 ```{r Probability1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5, echo=1:2}
 newdata = list(FERTILIZER=c(200, 100)) 
@@ -2952,6 +3051,95 @@ fert.mcmc %>% hypothesis('PEff>50')
 
 
 
+	### Change 100 to 200 (Method 2)
+	
+	```{r Probability1i, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+ newdata = list(FERTILIZER=c(200, 100)) 
+ fert.rstanarm3 %>%
+     emmeans(~FERTILIZER,  at=newdata) %>%
+     pairs() %>%
+     tidy_draws() %>%
+     summarise(across(contains('contrast'),
+                      list(P = ~ sum(.>80)/n(),
+                           HDCI = ~ median_hdci(.)),
+                      .names = c('{.fn}')
+                      )) %>%
+     tidyr::unpack(HDCI)
+ ```
+ 
+We can also express this as a percentage change
+	
+	```{r Probability1j, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+ newdata = list(FERTILIZER=c(200, 100)) 
+ ## Simple
+ fert.rstanarm3 %>%
+     emmeans(~FERTILIZER,  at=newdata) %>%
+     regrid(transform = 'log') %>%
+     pairs() %>%
+     regrid() 
+
+ ## More advanced (both P and percent change)
+ fert.mcmc <- fert.rstanarm3 %>%
+     emmeans(~FERTILIZER,  at=newdata) %>%
+     regrid(transform = 'log') %>%
+     pairs() %>%
+     regrid() %>%
+     tidy_draws() %>%
+     mutate(across(contains('contrast'), ~ 100*(. - 1)))
+
+ fert.mcmc %>%
+     summarise(across(contains('contrast'),
+                      list(P = ~ sum(.>50)/n(),
+                           HDCI = ~ median_hdci(.)),
+                      .names = c('{.fn}')
+                      )) %>%
+     tidyr::unpack(HDCI)
+
+ ```
+ 
+### Change 100 to 200 (Method 3)
+	
+	```{r Probability1k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+ fert.rstanarm3 %>%
+     linpred_draws(newdata = as.data.frame(newdata)) %>%
+     ungroup() %>%
+     group_by(.draw) %>%
+     summarise(Eff = -1 * diff(.linpred),
+               PEff = 100*Eff/.linpred[2]) %>%
+     ungroup() %>%
+     mutate(P = sum(PEff>50)/n()) %>%
+     pivot_longer(cols = -.draw) %>%
+     group_by(name) %>%
+     median_hdci()
+
+ ##OR
+ fert.rstanarm3 %>%
+     epred_draws(newdata = as.data.frame(newdata)) %>%
+     ungroup() %>%
+     group_by(.draw) %>%
+     summarise(Eff = -1 * diff(.epred),
+               PEff = 100*Eff/.epred[2]) %>%
+     ungroup() %>%
+     mutate(P = sum(PEff>50)/n()) %>%
+     pivot_longer(cols = -.draw) %>%
+     group_by(name) %>%
+     median_hdci()
+
+ ##OR for prediction of individual values
+ fert.rstanarm3 %>%
+     predicted_draws(newdata = as.data.frame(newdata)) %>%
+     ungroup() %>%
+     group_by(.draw) %>%
+     summarise(Eff = -1 * diff(.prediction),
+               PEff = 100*Eff/.prediction[2]) %>%
+     ungroup() %>%
+     mutate(P = sum(PEff>50)/n()) %>%
+     pivot_longer(cols = -.draw) %>%
+     group_by(name) %>%
+     median_hdci()
+ ```
+ 
+
 ## brms {.tabset .tabset-pills}
 
 ### Prob. of effect
@@ -3011,7 +3199,7 @@ fert.brm3 %>%
     geom_vline(xintercept=0.9, linetype='dashed')
 ```
 
-### Change 100 to 200
+### Change 100 to 200 (Method 1)
 
 ```{r Probability2c1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5, echo=1:2}
 newdata <- list(FERTILIZER = c(200, 100)) 
@@ -3042,7 +3230,6 @@ fert.mcmc <- fert.brm3 %>%
     mutate(Eff=p200 - p100,
            PEff=100*Eff/p100)
 fert.mcmc %>% head
-
 ```
 
 Now we can calculate the medians and HPD intervals of each column (and ignore
@@ -3093,6 +3280,94 @@ estimate is the difference between the effect and the hypothesised effect (50%).
 fert.mcmc %>% hypothesis('PEff>50')
 ```
 
+### Change 100 to 200 (Method 2)
+
+```{r Probability2i, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+newdata = list(FERTILIZER=c(200, 100)) 
+fert.brm3 %>%
+    emmeans(~FERTILIZER,  at=newdata) %>%
+    pairs() %>%
+    tidy_draws() %>%
+    summarise(across(contains('contrast'),
+                     list(P = ~ sum(.>80)/n(),
+                          HDCI = ~ median_hdci(.)),
+                     .names = c('{.fn}')
+                     )) %>%
+    tidyr::unpack(HDCI)
+```
+
+We can also express this as a percentage change
+
+```{r Probability2j, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+newdata = list(FERTILIZER=c(200, 100)) 
+## Simple
+fert.brm3 %>%
+    emmeans(~FERTILIZER,  at=newdata) %>%
+    regrid(transform = 'log') %>%
+    pairs() %>%
+    regrid() 
+
+## More advanced (both P and percent change)
+fert.mcmc <- fert.brm3 %>%
+    emmeans(~FERTILIZER,  at=newdata) %>%
+    regrid(transform = 'log') %>%
+    pairs() %>%
+    regrid() %>%
+    tidy_draws() %>%
+    mutate(across(contains('contrast'), ~ 100*(. - 1)))
+
+fert.mcmc %>%
+    summarise(across(contains('contrast'),
+                     list(P = ~ sum(.>50)/n(),
+                          HDCI = ~ median_hdci(.)),
+                     .names = c('{.fn}')
+                     )) %>%
+    tidyr::unpack(HDCI)
+
+```
+
+### Change 100 to 200 (Method 3)
+
+```{r Probability2k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+fert.brm3 %>%
+    linpred_draws(newdata = as.data.frame(newdata)) %>%
+    ungroup() %>%
+    group_by(.draw) %>%
+    summarise(Eff = -1 * diff(.linpred),
+              PEff = 100*Eff/.linpred[2]) %>%
+    ungroup() %>%
+    mutate(P = sum(PEff>50)/n()) %>%
+    pivot_longer(cols = -.draw) %>%
+    group_by(name) %>%
+    median_hdci()
+
+##OR
+fert.brm3 %>%
+    epred_draws(newdata = as.data.frame(newdata)) %>%
+    ungroup() %>%
+    group_by(.draw) %>%
+    summarise(Eff = -1 * diff(.epred),
+              PEff = 100*Eff/.epred[2]) %>%
+    ungroup() %>%
+    mutate(P = sum(PEff>50)/n()) %>%
+    pivot_longer(cols = -.draw) %>%
+    group_by(name) %>%
+    median_hdci()
+
+##OR for prediction of individual values
+fert.brm3 %>%
+    predicted_draws(newdata = as.data.frame(newdata)) %>%
+    ungroup() %>%
+    group_by(.draw) %>%
+    summarise(Eff = -1 * diff(.prediction),
+              PEff = 100*Eff/.prediction[2]) %>%
+    ungroup() %>%
+    mutate(P = sum(PEff>50)/n()) %>%
+    pivot_longer(cols = -.draw) %>%
+    group_by(name) %>%
+    median_hdci()
+```
+
 </div>
 
 
@@ -3102,6 +3377,8 @@ fert.mcmc %>% hypothesis('PEff>50')
 <div class='HIDDEN'>
 
 ## rstanarm {.tabset .tabset-pills}
+
+### Simple
 
 ```{r summaryFig1a, results='markdown', eval=TRUE, hidden=TRUE}
 fert.list = with(fert, list(FERTILIZER = seq(min(FERTILIZER), max(FERTILIZER), len=100)))
@@ -3125,8 +3402,36 @@ ggplot(newdata,  aes(y=.value,  x=FERTILIZER)) +
   geom_point(data=fert,  aes(y=YIELD))
 ```
 
+### Pretty
+
+```{r summaryFig1b, results='markdown', eval=TRUE, hidden=TRUE}
+fert.list = with(fert, list(FERTILIZER = seq(min(FERTILIZER), max(FERTILIZER), len=100)))
+newdata = emmeans(fert.rstanarm3, ~FERTILIZER, at=fert.list) %>% as.data.frame
+head(newdata)
+
+ggplot(newdata, aes(y=emmean, x=FERTILIZER)) + 
+    geom_point(data=fert, aes(y=YIELD)) +
+    geom_line() + 
+    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
+    scale_y_continuous(expression(Grass~yield~(g.m^-2)), breaks = seq(50,300, by = 50)) +
+    scale_x_continuous(expression(Fertilizer~concentration~(g.m^-2))) +
+    theme_classic()
+
+## spaghetti plot
+newdata = emmeans(fert.rstanarm3, ~FERTILIZER, at=fert.list) %>%
+    gather_emmeans_draws()
+newdata %>% head
+ggplot(newdata,  aes(y=.value,  x=FERTILIZER)) +
+    geom_line(aes(group=.draw),  colour = 'orange', alpha=0.01) +
+    geom_point(data=fert,  aes(y=YIELD)) +
+    scale_y_continuous(expression(Grass~yield~(g.m^-2)), breaks = seq(50,300, by = 50)) +
+    scale_x_continuous(expression(Fertilizer~concentration~(g.m^-2))) +
+    theme_classic()
+```
+
 ## brms {.tabset .tabset-pills}
 
+### Simple
 
 ```{r summaryFig2a, results='markdown', eval=TRUE, hidden=TRUE}
 fert.grid <- with(fert, list(FERTILIZER = modelr::seq_range(FERTILIZER, n = 100)))
@@ -3149,6 +3454,33 @@ ggplot(newdata,  aes(y = .value,  x = FERTILIZER)) +
     geom_line(aes(group = .draw),  color = 'blue', alpha = 0.01) +
     geom_point(data = fert,  aes(y = YIELD))
   
+```
+
+### Pretty
+
+```{r summaryFig2b, results='markdown', eval=TRUE, hidden=TRUE}
+fert.list = with(fert, list(FERTILIZER = seq(min(FERTILIZER), max(FERTILIZER), len=100)))
+newdata = emmeans(fert.brm3, ~FERTILIZER, at=fert.list) %>% as.data.frame
+head(newdata)
+
+ggplot(newdata, aes(y=emmean, x=FERTILIZER)) + 
+    geom_point(data=fert, aes(y=YIELD)) +
+    geom_line() + 
+    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
+    scale_y_continuous(expression(Grass~yield~(g.m^-2)), breaks = seq(50,300, by = 50)) +
+    scale_x_continuous(expression(Fertilizer~concentration~(g.m^-2))) +
+    theme_classic()
+
+## spaghetti plot
+newdata = emmeans(fert.brm3, ~FERTILIZER, at=fert.list) %>%
+    gather_emmeans_draws()
+newdata %>% head
+ggplot(newdata,  aes(y=.value,  x=FERTILIZER)) +
+    geom_line(aes(group=.draw),  colour = 'orange', alpha=0.01) +
+    geom_point(data=fert,  aes(y=YIELD)) +
+    scale_y_continuous(expression(Grass~yield~(g.m^-2)), breaks = seq(50,300, by = 50)) +
+    scale_x_continuous(expression(Fertilizer~concentration~(g.m^-2))) +
+    theme_classic()
 ```
 
 </div>

@@ -22,6 +22,7 @@ library(posterior)  #for posterior draws
 library(ggeffects)  #for partial effects plots
 library(patchwork)  #for multi-panel figures
 theme_set(theme_grey()) #put the default ggplot theme back
+source('helperFunctions.R')
 
 
 ## ----readData, results='markdown', eval=TRUE----------------------------------
@@ -59,7 +60,7 @@ sd(fert$YIELD)
 
 
 ## ----fitModel1e, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-1/sd(fert$FERTILIZER)
+1/sd(fert$YIELD)
 
 
 ## ----fitModel1f, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
@@ -70,9 +71,18 @@ fert.rstanarm1 <- update(fert.rstanarm,  prior_PD=TRUE)
 ggpredict(fert.rstanarm1) %>% plot(add.data=TRUE)
 
 
+## ----fitModel1h1, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE, fig.width = 5, fig.height = 3----
+standist::visualize("normal(164, 65)", xlim = c(0, 300)) 
+standist::visualize("normal(0, 1)", xlim = c(-10, 10))
+standist::visualize("cauchy(0, 2)",
+                    "gamma(2,1)",
+                    "exponential(0.016)",
+                    xlim = c(-10, 50))
+
+
 ## ----fitModel1h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
 fert.rstanarm2= stan_glm(YIELD ~ FERTILIZER, data=fert,
-                         prior_intercept = normal(164, 10, autoscale=FALSE),
+                         prior_intercept = normal(164, 65, autoscale=FALSE),
                          prior = normal(0, 1, autoscale=FALSE),
                          prior_aux = cauchy(0, 2, autoscale=FALSE),
                          prior_PD=TRUE, 
@@ -156,7 +166,7 @@ fert.brm1 %>% conditional_effects() %>%  plot(points=TRUE)
 
 
 ## ----priors, results='markdown', eval=TRUE------------------------------------
-standist::visualize("normal(164, 10)", xlim = c(-100, 300))
+standist::visualize("normal(164, 65)", xlim = c(-100, 300))
 standist::visualize("normal(0, 1)", xlim = c(-10, 10))
 standist::visualize("cauchy(0, 2)", xlim = c(-10, 10))
 standist::visualize("gamma(2, 1)", xlim = c(0, 10))
@@ -170,7 +180,7 @@ standist::visualize(
 
 
 ## ----fitModel2h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-priors <- prior(normal(164, 10),  class='Intercept') +
+priors <- prior(normal(164, 65),  class='Intercept') +
     prior(normal(0, 1), class='b') +
     prior(gamma(2, 1),  class='sigma')
 
@@ -180,12 +190,16 @@ fert.brm2 = brm(bf(YIELD ~ FERTILIZER),
                 sample_prior = 'only', 
                 iter = 5000,
                 warmup = 1000,
-                chains = 3,
+                chains = 3, cores = 3,
                 thin = 5,
                 refresh = 0)
 
 
 ## ----fitModel2i, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
+fert.brm2 %>%
+    ggpredict() %>%
+    plot(add.data=TRUE)
+#OR
 fert.brm2 %>%
     ggemmeans(~FERTILIZER) %>%
     plot(add.data = TRUE)
@@ -197,15 +211,20 @@ fert.brm2 %>%
 
 ## ----fitModel2j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
 fert.brm3 <- update(fert.brm2, sample_prior = 'yes', refresh = 0)
+#OR
 fert.brm3 = brm(bf(YIELD ~ FERTILIZER),
                 data=fert,
                 prior=priors,
                 sample_prior = 'yes', 
                 iter = 5000,
                 warmup = 1000,
-                chains = 3,
+                chains = 3, cores = 3,
                 thin = 5,
                 refresh = 0)
+
+
+## ----fitModel2j2, results='markdown', eval=TRUE, echo = FALSE, hidden=TRUE----
+save(fert.brm3, file = '../ws/testing/fert.brm3.RData')
 
 
 ## ----posterior2, results='markdown', eval=TRUE--------------------------------
@@ -216,18 +235,9 @@ fert.brm3 %>% hypothesis('FERTILIZER = 0') %>% plot
 fert.brm3 %>% hypothesis('sigma = 0', class = '') %>% plot
 
 
-## ----fitModel2k, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
+## ----fitModel2k, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE, fig.width = 8, fig.height = 4----
 fert.brm3 %>% get_variables()
-fert.brm3 %>%
-  posterior_samples %>%
-  select(-`lp__`) %>%
-  pivot_longer(cols=everything(), names_to='key', values_to='value') %>% 
-  mutate(Type=ifelse(str_detect(key, 'prior'), 'Prior', 'b'),
-         Class=ifelse(str_detect(key, 'Intercept'),  'Intercept',
-               ifelse(str_detect(key, 'sigma'),  'Sigma',  'b'))) %>%
-  ggplot(aes(x=Type,  y=value)) +
-  stat_pointinterval()+
-  facet_wrap(~Class,  scales='free')
+fert.brm3 %>% SUYR_prior_and_posterior() 
 
 
 ## ----fitModel2l, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
@@ -305,7 +315,7 @@ rbind(Model.1 = fert.inla$summary.hyperpar, Model.2 = fert.inla1$summary.hyperpa
 
 
 ## ----fitModel3d0, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
-print(plot(fert.inla1,
+plot(fert.inla1,
      plot.fixed.effects = TRUE,
      plot.lincomb = FALSE,
      plot.random.effects = FALSE,
@@ -313,12 +323,22 @@ print(plot(fert.inla1,
      plot.predictor = FALSE,
      plot.q = FALSE,
      plot.cpo = FALSE,
-     plot.prior = TRUE))
+     plot.prior = TRUE,
+     single = FALSE)
 
 
-## ----fitModel3d1, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
+## ----fitModel3d1, results='markdown', eval=TRUE, hidden=TRUE, fig.width = 6, fig.height = 3, cache=FALSE----
 library(INLAutils)
 plot_fixed_marginals(fert.inla1, priors = TRUE)
+
+## ----fitModel3d1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width = 3, fig.height = 3, cache=FALSE----
+library(INLAutils)
+plot_hyper_marginals(fert.inla1, CI = TRUE)
+
+
+## ----fitModel3d1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width = 6, fig.height = 6, cache=FALSE----
+library(INLAutils)
+autoplot(fert.inla1)
 
 
 ## ----fitModel3d2, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE, fig.width=8----
@@ -384,7 +404,7 @@ stan_ess(fert.rstanarm3)
 stan_dens(fert.rstanarm3, separate_chains = TRUE)
 
 
-## ----modelValidation1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
+## ----modelValidation1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=9----
 fert.ggs <- ggs(fert.rstanarm3)
 ggs_traceplot(fert.ggs)
 
@@ -484,6 +504,29 @@ fert.ggs %>% ggs_crosscorrelation()
 fert.ggs %>% ggs_grb()
 
 
+## ----fitModel3d1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width = 6, fig.height = 6, cache=FALSE----
+fert.inla1.cpo <- data.frame(cpo = fert.inla1$cpo$cpo,
+           pit = fert.inla1$cpo$pit,
+           failure = fert.inla1$cpo$failure) %>%
+    filter(failure == 0) %>%
+    mutate(row = 1:n())
+
+g1 <- fert.inla1.cpo %>%
+    ggplot(aes(y = cpo, x = row)) +
+    geom_point()
+g2 <- fert.inla1.cpo %>%
+    ggplot(aes(x = cpo)) +
+    geom_histogram()
+g3 <- fert.inla1.cpo %>%
+    ggplot(aes(y = pit, x = row)) +
+    geom_point()
+g4 <- fert.inla1.cpo %>%
+    ggplot(aes(x = pit)) +
+    geom_histogram()
+
+(g1 + g2)/(g3 + g4)
+
+
 ## ----modelValidation3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
 available_ppc()
 
@@ -552,7 +595,7 @@ pp_check(fert.brm3, x='FERTILIZER',type='ribbon')
 
 
 ## ----modelValidation6a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-preds <- fert.brm3 %>% posterior_predict(nsamples=250,  summary=FALSE)
+preds <- fert.brm3 %>% posterior_predict(ndraws=250,  summary=FALSE)
 fert.resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = fert$YIELD,
                             fittedPredictedResponse = apply(preds, 2, median),
@@ -570,7 +613,7 @@ sum(fert.inla1$cpo$cop)
 fert.inla1$cpo$failure
 
 
-## ----fitModel3e3, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
+## ----fitModel3e3, results='markdown', eval=TRUE, hidden=FALSE, cache=FALSE----
 plot(fert.inla1,
      plot.fixed.effects = FALSE,
      plot.lincomb = FALSE,
@@ -579,7 +622,30 @@ plot(fert.inla1,
      plot.predictor = FALSE,
      plot.q = FALSE,
      plot.cpo = TRUE,
-     plot.prior = FALSE)
+     plot.prior = FALSE) 
+
+
+## ----fitModel3d1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width = 6, fig.height = 6, cache=FALSE----
+fert.inla1.cpo <- data.frame(cpo = fert.inla1$cpo$cpo,
+           pit = fert.inla1$cpo$pit,
+           failure = fert.inla1$cpo$failure) %>%
+    filter(failure == 0) %>%
+    mutate(row = 1:n())
+
+g1 <- fert.inla1.cpo %>%
+    ggplot(aes(y = cpo, x = row)) +
+    geom_point()
+g2 <- fert.inla1.cpo %>%
+    ggplot(aes(x = cpo)) +
+    geom_histogram()
+g3 <- fert.inla1.cpo %>%
+    ggplot(aes(y = pit, x = row)) +
+    geom_point()
+g4 <- fert.inla1.cpo %>%
+    ggplot(aes(x = pit)) +
+    geom_histogram()
+
+(g1 + g2)/(g3 + g4)
 
 
 ## ----fitModel3e4, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
@@ -629,7 +695,9 @@ fert.rstanarm3 %>% fitted_draws(newdata=fert) %>%
 fert.brm3 %>% ggemmeans(~FERTILIZER) %>% plot(add.data = TRUE) 
 fert.brm3 %>% conditional_effects() 
 fert.brm3 %>% conditional_effects() %>% plot(points = TRUE)
-fert.brm3 %>% conditional_effects(spaghetti = TRUE, nsamples = 200) %>% plot(points = TRUE) 
+fert.brm3 %>%
+    conditional_effects(spaghetti = TRUE, ndraws = 200) %>%
+    plot(points = TRUE) 
 
 
 ## ----partialPlot2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
@@ -1275,6 +1343,88 @@ fert.mcmc %>% summarise(P=sum(PEff>50)/n())
 fert.mcmc %>% hypothesis('PEff>50')
 
 
+## ----Probability1i, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+ newdata = list(FERTILIZER=c(200, 100)) 
+ fert.rstanarm3 %>%
+     emmeans(~FERTILIZER,  at=newdata) %>%
+     pairs() %>%
+     tidy_draws() %>%
+     summarise(across(contains('contrast'),
+                      list(P = ~ sum(.>80)/n(),
+                           HDCI = ~ median_hdci(.)),
+                      .names = c('{.fn}')
+                      )) %>%
+     tidyr::unpack(HDCI)
+
+
+## ----Probability1j, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+ newdata = list(FERTILIZER=c(200, 100)) 
+ ## Simple
+ fert.rstanarm3 %>%
+     emmeans(~FERTILIZER,  at=newdata) %>%
+     regrid(transform = 'log') %>%
+     pairs() %>%
+     regrid() 
+
+ ## More advanced (both P and percent change)
+ fert.mcmc <- fert.rstanarm3 %>%
+     emmeans(~FERTILIZER,  at=newdata) %>%
+     regrid(transform = 'log') %>%
+     pairs() %>%
+     regrid() %>%
+     tidy_draws() %>%
+     mutate(across(contains('contrast'), ~ 100*(. - 1)))
+
+ fert.mcmc %>%
+     summarise(across(contains('contrast'),
+                      list(P = ~ sum(.>50)/n(),
+                           HDCI = ~ median_hdci(.)),
+                      .names = c('{.fn}')
+                      )) %>%
+     tidyr::unpack(HDCI)
+
+
+
+## ----Probability1k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+ fert.rstanarm3 %>%
+     linpred_draws(newdata = as.data.frame(newdata)) %>%
+     ungroup() %>%
+     group_by(.draw) %>%
+     summarise(Eff = -1 * diff(.linpred),
+               PEff = 100*Eff/.linpred[2]) %>%
+     ungroup() %>%
+     mutate(P = sum(PEff>50)/n()) %>%
+     pivot_longer(cols = -.draw) %>%
+     group_by(name) %>%
+     median_hdci()
+
+ ##OR
+ fert.rstanarm3 %>%
+     epred_draws(newdata = as.data.frame(newdata)) %>%
+     ungroup() %>%
+     group_by(.draw) %>%
+     summarise(Eff = -1 * diff(.epred),
+               PEff = 100*Eff/.epred[2]) %>%
+     ungroup() %>%
+     mutate(P = sum(PEff>50)/n()) %>%
+     pivot_longer(cols = -.draw) %>%
+     group_by(name) %>%
+     median_hdci()
+
+ ##OR for prediction of individual values
+ fert.rstanarm3 %>%
+     predicted_draws(newdata = as.data.frame(newdata)) %>%
+     ungroup() %>%
+     group_by(.draw) %>%
+     summarise(Eff = -1 * diff(.prediction),
+               PEff = 100*Eff/.prediction[2]) %>%
+     ungroup() %>%
+     mutate(P = sum(PEff>50)/n()) %>%
+     pivot_longer(cols = -.draw) %>%
+     group_by(name) %>%
+     median_hdci()
+
+
 ## ----Probability2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 fert.brm3 %>% hypothesis('FERTILIZER > 0')
 fert.brm3 %>% hypothesis('FERTILIZER > 0') %>% plot (ignore_prior= TRUE)
@@ -1335,7 +1485,6 @@ fert.mcmc <- fert.brm3 %>%
 fert.mcmc %>% head
 
 
-
 ## ----Probability2e, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 fert.mcmc %>%
     tidyMCMC(estimate.method='median',
@@ -1360,6 +1509,88 @@ fert.mcmc %>% summarise(P=sum(PEff>50)/n())
 fert.mcmc %>% hypothesis('PEff>50')
 
 
+## ----Probability2i, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+newdata = list(FERTILIZER=c(200, 100)) 
+fert.brm3 %>%
+    emmeans(~FERTILIZER,  at=newdata) %>%
+    pairs() %>%
+    tidy_draws() %>%
+    summarise(across(contains('contrast'),
+                     list(P = ~ sum(.>80)/n(),
+                          HDCI = ~ median_hdci(.)),
+                     .names = c('{.fn}')
+                     )) %>%
+    tidyr::unpack(HDCI)
+
+
+## ----Probability2j, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+newdata = list(FERTILIZER=c(200, 100)) 
+## Simple
+fert.brm3 %>%
+    emmeans(~FERTILIZER,  at=newdata) %>%
+    regrid(transform = 'log') %>%
+    pairs() %>%
+    regrid() 
+
+## More advanced (both P and percent change)
+fert.mcmc <- fert.brm3 %>%
+    emmeans(~FERTILIZER,  at=newdata) %>%
+    regrid(transform = 'log') %>%
+    pairs() %>%
+    regrid() %>%
+    tidy_draws() %>%
+    mutate(across(contains('contrast'), ~ 100*(. - 1)))
+
+fert.mcmc %>%
+    summarise(across(contains('contrast'),
+                     list(P = ~ sum(.>50)/n(),
+                          HDCI = ~ median_hdci(.)),
+                     .names = c('{.fn}')
+                     )) %>%
+    tidyr::unpack(HDCI)
+
+
+
+## ----Probability2k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+fert.brm3 %>%
+    linpred_draws(newdata = as.data.frame(newdata)) %>%
+    ungroup() %>%
+    group_by(.draw) %>%
+    summarise(Eff = -1 * diff(.linpred),
+              PEff = 100*Eff/.linpred[2]) %>%
+    ungroup() %>%
+    mutate(P = sum(PEff>50)/n()) %>%
+    pivot_longer(cols = -.draw) %>%
+    group_by(name) %>%
+    median_hdci()
+
+##OR
+fert.brm3 %>%
+    epred_draws(newdata = as.data.frame(newdata)) %>%
+    ungroup() %>%
+    group_by(.draw) %>%
+    summarise(Eff = -1 * diff(.epred),
+              PEff = 100*Eff/.epred[2]) %>%
+    ungroup() %>%
+    mutate(P = sum(PEff>50)/n()) %>%
+    pivot_longer(cols = -.draw) %>%
+    group_by(name) %>%
+    median_hdci()
+
+##OR for prediction of individual values
+fert.brm3 %>%
+    predicted_draws(newdata = as.data.frame(newdata)) %>%
+    ungroup() %>%
+    group_by(.draw) %>%
+    summarise(Eff = -1 * diff(.prediction),
+              PEff = 100*Eff/.prediction[2]) %>%
+    ungroup() %>%
+    mutate(P = sum(PEff>50)/n()) %>%
+    pivot_longer(cols = -.draw) %>%
+    group_by(name) %>%
+    median_hdci()
+
+
 ## ----summaryFig1a, results='markdown', eval=TRUE, hidden=TRUE-----------------
 fert.list = with(fert, list(FERTILIZER = seq(min(FERTILIZER), max(FERTILIZER), len=100)))
 newdata = emmeans(fert.rstanarm3, ~FERTILIZER, at=fert.list) %>% as.data.frame
@@ -1380,6 +1611,31 @@ newdata %>% head
 ggplot(newdata,  aes(y=.value,  x=FERTILIZER)) +
   geom_line(aes(group=.draw),  alpha=0.01) +
   geom_point(data=fert,  aes(y=YIELD))
+
+
+## ----summaryFig1b, results='markdown', eval=TRUE, hidden=TRUE-----------------
+fert.list = with(fert, list(FERTILIZER = seq(min(FERTILIZER), max(FERTILIZER), len=100)))
+newdata = emmeans(fert.rstanarm3, ~FERTILIZER, at=fert.list) %>% as.data.frame
+head(newdata)
+
+ggplot(newdata, aes(y=emmean, x=FERTILIZER)) + 
+    geom_point(data=fert, aes(y=YIELD)) +
+    geom_line() + 
+    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
+    scale_y_continuous(expression(Grass~yield~(g.m^-2)), breaks = seq(50,300, by = 50)) +
+    scale_x_continuous(expression(Fertilizer~concentration~(g.m^-2))) +
+    theme_classic()
+
+## spaghetti plot
+newdata = emmeans(fert.rstanarm3, ~FERTILIZER, at=fert.list) %>%
+    gather_emmeans_draws()
+newdata %>% head
+ggplot(newdata,  aes(y=.value,  x=FERTILIZER)) +
+    geom_line(aes(group=.draw),  colour = 'orange', alpha=0.01) +
+    geom_point(data=fert,  aes(y=YIELD)) +
+    scale_y_continuous(expression(Grass~yield~(g.m^-2)), breaks = seq(50,300, by = 50)) +
+    scale_x_continuous(expression(Fertilizer~concentration~(g.m^-2))) +
+    theme_classic()
 
 
 ## ----summaryFig2a, results='markdown', eval=TRUE, hidden=TRUE-----------------
@@ -1403,4 +1659,29 @@ ggplot(newdata,  aes(y = .value,  x = FERTILIZER)) +
     geom_line(aes(group = .draw),  color = 'blue', alpha = 0.01) +
     geom_point(data = fert,  aes(y = YIELD))
   
+
+
+## ----summaryFig2b, results='markdown', eval=TRUE, hidden=TRUE-----------------
+fert.list = with(fert, list(FERTILIZER = seq(min(FERTILIZER), max(FERTILIZER), len=100)))
+newdata = emmeans(fert.brm3, ~FERTILIZER, at=fert.list) %>% as.data.frame
+head(newdata)
+
+ggplot(newdata, aes(y=emmean, x=FERTILIZER)) + 
+    geom_point(data=fert, aes(y=YIELD)) +
+    geom_line() + 
+    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
+    scale_y_continuous(expression(Grass~yield~(g.m^-2)), breaks = seq(50,300, by = 50)) +
+    scale_x_continuous(expression(Fertilizer~concentration~(g.m^-2))) +
+    theme_classic()
+
+## spaghetti plot
+newdata = emmeans(fert.brm3, ~FERTILIZER, at=fert.list) %>%
+    gather_emmeans_draws()
+newdata %>% head
+ggplot(newdata,  aes(y=.value,  x=FERTILIZER)) +
+    geom_line(aes(group=.draw),  colour = 'orange', alpha=0.01) +
+    geom_point(data=fert,  aes(y=YIELD)) +
+    scale_y_continuous(expression(Grass~yield~(g.m^-2)), breaks = seq(50,300, by = 50)) +
+    scale_x_continuous(expression(Fertilizer~concentration~(g.m^-2))) +
+    theme_classic()
 

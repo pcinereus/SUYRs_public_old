@@ -52,6 +52,7 @@ Load the necessary libraries
 ```{r libraries, results='markdown', eval=TRUE}
 library(rstanarm)   #for fitting models in STAN
 library(brms)       #for fitting models in STAN
+library(standist)   #for exploring distributions
 library(coda)       #for diagnostics
 library(bayesplot)  #for diagnostics
 library(ggmcmc)     #for MCMC diagnostics
@@ -60,11 +61,15 @@ library(rstan)      #for interfacing with STAN
 library(emmeans)    #for marginal means etc
 library(broom)      #for tidying outputs
 library(tidybayes)  #for more tidying outputs
+library(HDInterval) #for HPD intervals
 library(ggeffects)  #for partial plots
 library(tidyverse)  #for data wrangling etc
 library(broom.mixed)#for summarising models
+library(posterior)  #for posterior draws
 library(ggeffects)  #for partial effects plots
+library(patchwork)  #for multi-panel figures
 theme_set(theme_grey()) #put the default ggplot theme back
+source('helperFunctions.R')
 ```
 
 # Scenario
@@ -96,7 +101,7 @@ The aim of the analysis is to investigate the relationship between mussel clump 
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-peake = read_csv('../data/peakquinn.csv', trim_ws=TRUE)
+peake <- read_csv('../data/peakquinn.csv', trim_ws=TRUE)
 glimpse(peake)
 ```
 

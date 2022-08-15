@@ -30,7 +30,6 @@ output:
     fig_width: 4
     highlight: tango
     toc: yes
-    toc_depth: 2
 output_dir: "docs"
 documentclass: article
 fontsize: 12pt
@@ -40,7 +39,7 @@ monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
 ---
- 
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
 ```
@@ -69,11 +68,18 @@ library(posterior)  #for posterior draws
 library(ggeffects)  #for partial effects plots
 library(patchwork)  #for multi-panel figures
 theme_set(theme_grey()) #put the default ggplot theme back
+source('helperFunctions.R')
 ```
 
 # Scenario
 
-Here is an example from @Fowler-1998-1998. An agriculturalist was interested in the effects of fertilizer load on the yield of grass.  Grass seed was sown uniformly over an area and different quantities of commercial fertilizer were applied to each of ten 1 m<sup>2</sup> randomly located plots.  Two months later the grass from each plot was harvested, dried and weighed.  The data are in the file **fertilizer.csv** in the **data** folder.
+Here is an example from @Fowler-1998-1998. An agriculturalist was
+interested in the effects of fertilizer load on the yield of grass.
+Grass seed was sown uniformly over an area and different quantities of
+commercial fertilizer were applied to each of ten 1 m<sup>2</sup>
+randomly located plots.  Two months later the grass from each plot was
+harvested, dried and weighed.  The data are in the file
+**fertilizer.csv** in the **data** folder.
 
 ![](../resources/turf.jpg){width=70%}
 
@@ -103,18 +109,18 @@ glimpse(fert)
 ```
 
 # Exploratory data analysis
-
+ 
 
 Model formula:
 $$
 \begin{align}
 y_i &\sim{} \mathcal{N}(\mu_i, \sigma^2)\\
 \mu_i &= \beta_0 + \beta_1 x_i\\
-\beta_0 &\sim{} \mathcal{N}(0,100)\\
-\beta_1 &\sim{} \mathcal{N}(0,10)\\
-\sigma &\sim{} \mathcal{cauchy}(0,5)\\
+\beta_0 &\sim{} \mathcal{N}(164,65)\\
+\beta_1 &\sim{} \mathcal{N}(0,1)\\
+\sigma &\sim{} \mathcal{cauchy}(0,2)\\
 OR\\
-\sigma &\sim{} \mathcal{Exp}(1)\\
+\sigma &\sim{} \mathcal{Exp}(0.016)\\
 OR\\
 \sigma &\sim{} \mathcal{gamma}(2,1)\\
 \end{align}
@@ -323,223 +329,8 @@ different starting objects.
 
 
 
-
-
-## INLA {.tabset .tabset-pills}
-INLA captures a summary of the parameter posteriors within the fitted object.
-
-### summary
-The `summary()` method generates simple summaries (mean, standard deviation as
-well as 10, 50 and 90 percentiles).
-
-
-
-**Conclusions:**
-
-- in the initial block of information, we are reminded of the function _call_
-- a breakdown of the various components of the time taken for the
-  analysis to run
-- the 'Fixed effects' indicate that the:
-  -  estimated Intercept is `r fert.inla1.sum$fixed[1,1]` (mean) or 
-     `r fert.inla1.sum$fixed[1,4]` (median)
-  -  estimated slope is `r fert.inla1.sum$fixed[2,1]` (mean) or 
-     `r fert.inla1.sum$fixed[2,4]` (median)
-  -  the 95% Credibility intervals indicate that we are 95% confident
-     that the slope is between `r fert.inla1.sum$fixed[2,3]` and 
-	 `r fert.inla1.sum$fixed[2,5]`
-- the `Model hyperparameters' indicate that the:
-  -  the precision of the Gaussian distribution is 
-     `r fert.inla1.sum$hyperpar[1,1]` (mean) and 
-	 `r fert.inla1.sum$hyperpar[1,4]` (median) .  Precision is $\tau = 1/\sigma^2$
-     and thus, $\sigma$ is estimated to be 
-	 `r 1/sqrt(fert.inla1.sum$hyperpar[1,4])`
-  -  WAIC (Watanabe-Akaike information criterion is estimated to be 
-     `r fert.inla1.sum$waic$waic`
-
-### Plot of posteriors {.tabset .tabset-pills}
-#### Fixed effects
-
-#### Hyperparameters
-
-
-### Posterior draws {.tabset .tabset-pills}
-
-Since INLA is a Bayesian approximation, unlike full Bayesian methods,
-there are not chains of posterior draws.  However, we can use the
-`inla.posterior.sample()` _function_, to **generate** draws of
-parameter and fitted value posteriors from the fitted model.  In the
-following code snippet, we will generate 1000 draws from the fitted
-model (for repeatability, I will also set a random seed).
-
-The output of this function is a _list_ and items are packed in
-according to the sample (draw) number.  I find this awkward to work
-with and prefer to have the data organised by parameters.  However,
-prior to reorganising the list, I will query the latent (fixed and
-fitted values) parameter names to help with filtering to just the ones
-I am interested in later on.
-
-
-The names that begin with `Predictor:` are the _fitted_ values.
-Essentially, they are the estimated predicted values associated with
-the observed data.  The `(Intercept):1` and `FERTILIZER:1` are the
-intercept and slope respectively.
-
-Now to convert the list of draws into a data.frame.
-
-
-This will convert the list into a $s\times p$ data.frame, where $s$ is
-the number of draws (1000 in this case) and $p$ is the number of
-latent parameters (12 in this case) plus an additional column to keep
-track of the Parameters.
-
-Finally, we might like to lengthen this data set for more convenient
-plotting and summarising.
-
-
-#### Intervals
-
-To focus on and filter to just the fixed effects, we could now:
-
-
-#### Density intervals 
-
- 
-#### Ridges
-
-
-### $R^2$
-
-
-
-
 # Predictions {.tabset .tabset-faded}
 
-
-
-
-## INLA {.tabset .tabset-pills}
-As with most things to do with INLA, things are done a little
-differently.  In INLA, there are three options for predictions:
-
-1. generate draws of the parameters and calculate the outer product of
-   these and a model matrix associated with the newdata.
-2. bind the newdata to the observed data when fitting the model which
-   will result in INLA estimating the fitted values during model
-   fitting. In this approach, the response values associated with the
-   newdata should all be `NA`.
-3. define a linear combinations and pass this into the model during
-   fitting
-
-Lets explore each of these in turn.
-
-### From draws
-
-```{r predictions3a, results='markdown', eval=TRUE, fig.width=8, fig.height=5}
-## Expected values
-Xmat <- model.matrix(~FERTILIZER, newdata)
-nms <- colnames(fert.inla1$model.matrix)
-sel <- sapply(nms, function(x) 0, simplify = FALSE)
-n <- 1000
-draws <- inla.posterior.sample(n = n, result = fert.inla1, selection = sel, seed = 1)
-coefs <- t(sapply(draws, function(x) x$latent))
-Fit <- coefs %*% t(Xmat) %>%
-  as.data.frame() %>%
-  mutate(Rep = 1:n()) %>%
-  pivot_longer(cols = -Rep) %>%
-  group_by(name) %>%
-  median_hdci(value) %>%
-  ungroup() %>%
-  mutate(name = as.integer(as.character(name))) %>%
-  arrange(name)
-newdata.inla <- newdata %>%
-  bind_cols(Fit)
-newdata.inla
-
-## Predictions
-Fit <- coefs %*% t(Xmat) 
-draws <- inla.posterior.sample(n = n, result = fert.inla1, seed = 1)
-sigma <- sqrt(1/(sapply(draws, function(x) x$hyperpar)))
-sigma <- sapply(sigma, function(x) rnorm(1,0,sigma))
-Fit <- sweep(Fit, MARGIN = 1, sigma, FUN = "+") %>%
-    as.data.frame() %>%
-    mutate(Rep = 1:n()) %>%
-    pivot_longer(cols = -Rep) %>%
-    group_by(name) %>%
-    median_hdci(value) %>%
-    bind_cols(newdata) %>% 
-    ungroup() %>%
-    dplyr::select(FERTILIZER, everything(), -name)
-Fit
-
-## or
-fun <- function(coefs = NA) {
-    ## theta[1] is the precision
-    return (Intercept + FERTILIZER * coefs[,'FERTILIZER'] +
-            rnorm(nrow(coefs), sd = sqrt(1/theta[1])))
-}
-Fit <- inla.posterior.sample.eval(fun, draws, coefs = newdata) %>%
-    as.data.frame() %>%
-    bind_cols(newdata) %>%
-    pivot_longer(cols = -FERTILIZER) %>%
-    group_by(FERTILIZER) %>%
-    median_hdci(value)
-    
-Fit
-
-```
-
-### Fitted (expected) values
-
-```{r predictions3b, results='markdown', eval=TRUE, fig.width=8, fig.height=5}
-fert.pred <- fert %>%
-    bind_rows(newdata)
-i.newdata <- (nrow(fert) +1):nrow(fert.pred)
-fert.inla2 <- inla(YIELD ~ FERTILIZER,
-  data = fert.pred,
-  family = "gaussian",
-  control.fixed = list(
-    mean.intercept = 80,
-    prec.intercept = 0.00001,
-    mean = 0,
-    prec = 0.0384
-  ),
-  control.family = list(hyper = list(prec = list(
-    prior = "loggamma",
-    param = c(0.5, 0.31)
-  ))),
-  control.compute = list(config = TRUE, dic = TRUE, waic = TRUE, cpo = TRUE)
-)
-
-fert.inla2$summary.fitted.values[i.newdata,]
-## or on the link scale...
-fert.inla2$summary.linear.predictor[i.newdata,]
-```
-
-### Linear combinations
-
-```{r predictions3c, results='markdown', eval=TRUE, fig.width=8, fig.height=5}
-Xmat <- model.matrix(~FERTILIZER, data=newdata)
-lincomb <- inla.make.lincombs(as.data.frame(Xmat))
-
-fert.inla3 <- inla(YIELD ~ FERTILIZER,
-  data = fert,
-  family = "gaussian",
-  lincomb = lincomb,
-  control.fixed = list(
-    mean.intercept = 80,
-    prec.intercept = 0.00001,
-    mean = 0,
-    prec = 0.0384
-  ),
-  control.family = list(hyper = list(prec = list(
-    prior = "loggamma",
-    param = c(0.5, 0.31)
-  ))),
-  control.compute = list(config = TRUE, dic = TRUE, waic = TRUE, cpo = TRUE)
-)
-
-fert.inla3$summary.lincomb.derived
-```
 
 # Hypothesis testing {.tabset .tabset-faded}
 

@@ -65,6 +65,7 @@ library(ggeffects)  #for partial plots
 library(tidyverse)  #for data wrangling etc
 library(patchwork)
 library(ggridges)   #for ridge plots
+source('helperFunctions.R')
 ```
 
 
@@ -132,8 +133,6 @@ where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a m
 
 
 # Model validation {.tabset .tabset-faded}
-
-
 
 
 

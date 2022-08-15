@@ -67,6 +67,7 @@ library(ggeffects)  #for partial effects plots
 library(tidyverse)  #for data wrangling etc
 library(patchwork)  #for multiple plots
 library(ggridges)   #for ridge plots 
+source("helperFunctions.R")
 ```
 
 # Scenario
@@ -109,7 +110,10 @@ glimpse(loyn)
 Model formula:
 $$
 y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
-log(\mu_i) = \boldsymbol{\beta} \bf{X_i}
+log(\mu_i) = \boldsymbol{\beta} \bf{X_i}\\
+\beta_0 \sim{} \mathcal{N}(3,2)\\
+\beta_{1-9} \sim{} \mathcal{N}(0,2)\\
+\sigma \sim{} \mathcal{gamma}(2,1)\\
 $$
 
 where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the additive effects of
