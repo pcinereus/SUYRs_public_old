@@ -1,0 +1,85 @@
+---
+title: "Bayesian GLM Part1"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../resources/references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+```
+
+# Preparations
+
+| Function                        | Values            | Description                                             |
+|---------------------------------|-------------------|---------------------------------------------------------|
+| `__::as.matrix()`               | Parameters        | Returns $n\times p$ matrix                              |
+| `__::as.data.frame()`           | Parameters        | Returns $n\times p$ data.frame                          |
+| `__::as_tibble()`               | Parameters        | Returns $n\times p$ tibble                              |
+| `posterior::as_draws_df()`      | Parameters        | Returns $n\times p$ data.frame with additional info     |
+|                                 |                   | about chain, interaction and draw                       |
+| ~~`brms::posterior_samples()`~~ | ~~Parameters~~    | ~~Returns $n\times p$ data.frame~~                      |
+| `tidybayes::tidy_draws()`       | Parameters        | Returns $n\times p$ tibble with addition info about     |
+|                                 |                   | the chain, iteration and draw                           |
+| `rstan::extract()`              | Parameters        | Returns a $p$ length list of $n$ length vectors         |
+|---------------------------------|-------------------|---------------------------------------------------------|
+| `tidybayes::spread_draws()`     | Parameters        | Returns $n\times r$ tibble with additional info about   |
+|                                 |                   | chain, interaction and draw                             |
+| `tidybayes::gather_draws()`     | Parameters        | Returns a gathered `spread_draws` tibble                |
+|                                 |                   | with additional info about chain, interaction and draw  |
+|---------------------------------|-------------------|---------------------------------------------------------|
+| `rstanarm::posterior_linpred()` | Linear predictors | Returns $n\times N$ tibble on the link scale            |
+| `brms::posterior_linpred()`     | Linear predictors | Returns $n\times N$ tibble on the link scale            |
+| `tidybayes::linpred_draws()`    | Linear predictors | Returns tibble with $n\times N rows and `.linpred`      |
+|                                 |                   | on the link scale additional info about chain,          |
+|                                 |                   | interaction and draw                                    |
+|---------------------------------|-------------------|---------------------------------------------------------|
+| `rstanarm::posterior_epred()`   | Expected values   | Returns $n\times N$ tibble on the response scale        |
+| `brms::posterior_epred()`       | Expected values   | Returns $n\times N$ tibble on the response scale        |
+| `tidybayes::epred_draws()`      | Expected values   | Returns tibble with $n\times N rows and `.epred` on     |
+|                                 |                   | the response scale additional info about chain,         |
+|                                 |                   | interaction and draw                                    |
+|---------------------------------|-------------------|---------------------------------------------------------|
+| `rstanarm::posterior_predict()` | Expected values   | Returns $n\times N$ tibble of predictions (including    |
+|                                 |                   | residuals) on the response scale                        |
+| `brms::posterior_predict()`     | Expected values   | Returns $n\times N$ tibble of predictions (including    |
+|                                 |                   | residuals) on the response scale                        |
+| `tidybayes::predicted_draws()`  | Expected values   | Returns tibble with $n\times N rows and `.prediction`   |
+|                                 |                   | (including residuals) on the response scale additional  |
+|                                 |                   | info about chain, interaction and draw                  |
