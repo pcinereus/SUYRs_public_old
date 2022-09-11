@@ -12,6 +12,7 @@ output:
     fig_width: 4
     highlight: textmate
     theme: spacelab
+    number_sections: true
     toc: yes
     toc_float: yes
     css: ../resources/ws_style.css
@@ -57,14 +58,81 @@ library(tidyverse) #for data wrangling
  
 ```{r getData, results='markdown', eval=TRUE}
 load(file='../data/manipulationDatasets.RData')
+```
+
+`dat.1`
+
+![](../resources/tikz_fab_data-1.png){width=70%}
+
+### Exploring data
+
+```{r getData1, results='markdown', eval=TRUE}
 dat.1 %>% head
 ```
+
+```{r exploringdata, results='markdown', eval=TRUE}
+## replace this with code to explore imported data
+## From now on I will not provide many code chunks.
+## Instead you are incouraged to create your own chunks
+## with discussed code
+## In Rstudio, you can create a chunk with Cntr-Alt-I
+```
+
+
+## Overview of functions
+
+### Operating on a single dataset
+
+**operating on the rows**
+
+| Function             | Action                                   |
+|----------------------|------------------------------------------|
+| `dplyr::arrange()`   | changing the order of rows               |
+| `dplyr::filter()`    | subset of rows based on column values    |
+| `dplyr::slice()`     | subset of rows based on position         |
+| `dplyr::summarise()` | aggregating (collapsing) to a single row |
+| `dplyr::count()`     | count the number of unique combinations  |
+| `dplyr::group_by()`  | define groups of rows                    |
+
+**operating on the columns**
+
+| Function             | Action                                           |
+|----------------------|--------------------------------------------------|
+| `dplyr::select()`    | subset of columns                                |
+| `dplyr::rename()`    | change the name of columns                       |
+| `dplyr::pull()`      | extract a single column as a vector              |
+| `dplyr::distinct()`  | unique combinations of column values             |
+| `dplyr::mutate()`    | adding columns and modifying column values       |
+| `tidyr::unite()`     | combine multiple columns together                |
+| `tidyr::separate()`  | separating a single column into multiple columns |
+
+**reshaping (pivotting) the dataset**
+
+| Function                | Action                         |
+|-------------------------|--------------------------------|
+| `tidyr::pivot_longer()` | lengthen data from wide format |
+| `tidyr::pivot_wider()`  | widen data from long format    |
+
+### Operating on two datasets
+
+| Function          | Action                                                    |
+|-------------------|-----------------------------------------------------------|
+| `dplyr::*_join()` | merge (join) two datasets together based on common fields |
 
 
 # Piping
 
-# Data frames and tibbles
+```{r piping, results='markup'}
+head(dat.1)
+#OR
+dat.1 %>% head()
+#OR
+dat.1 %>% head
+#OR
+dat.1 |> head()
+```
 
+# Data frames and tibbles
 
 # Base R data manipulation
 
@@ -147,55 +215,41 @@ https://github.com/rstudio/cheatsheets/raw/master/data-transformation.pdf
   - take a vector and return a **vector**
      - e.g. `log()`
 
+# Sorting data
 
+# Subsets of data
 
-Sorting data
-================
-```{r, results='markup'}
-head(dat.1)
-#OR
-dat.1 %>% head()
-#OR
-dat.1 %>% head
-```
+## Subset columns (select)
 
-Subset columns - select
-=========================
+### Helper functions
 
-## Regular expressions (regex)
+#### Regular expressions (regex)
 
 https://github.com/rstudio/cheatsheets/raw/master/data-transformation.pdf
 
-Renaming columns -rename
-========================
+## Extracting a single variable
 
-Filtering - filter
-====================
-
-Selecting rows by number - slice
-=================================
+## Renaming columns -rename
 
 
-Adding/editing columns - mutate
-===========================
+## Subset of rows (filter)
 
+## Selecting rows by number - slice
 
-Summarising (aggregating) data
-=================================
+# Adding/editing columns - mutate
 
+## Using helper functions
 
-Grouping (=aggregating)
-=========================
+# Summarising (aggregating) data
 
-Reshaping data
-=================
+# Grouping 
+
+# Reshaping data
 
 ## Pivot longer
 
 ## Pivot wider
 
-Combining data
-=================
+# Combining data
 
-Applied examples
-===================
+# Applied examples
