@@ -18,6 +18,7 @@ library(tidyverse)  #for data wrangling etc
 library(broom.mixed)#for summarising models
 library(ggeffects)  #for partial effects plots
 theme_set(theme_grey()) #put the default ggplot theme back
+source("helperFunctions.R")
 
 
 ## ----readData, results='markdown', eval=TRUE----------------------------------
@@ -42,12 +43,10 @@ prior_summary(polis.rstanarm)
 
 ## ----fitModel1c, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
 mean(polis$PA)
-sd(polis$PA)
-2.5*sd(polis$PA)
 
 
 ## ----fitModel1d, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
-2.5/sd(polis$RATIO)
+2.5 * 1/sd(polis$RATIO)
 
 
 ## ----fitModel1f, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
@@ -60,8 +59,8 @@ ggemmeans(polis.rstanarm1,  ~RATIO) %>% plot(add.data=TRUE)
 ## ----fitModel1h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
 polis.rstanarm2= stan_glm(PA ~ RATIO, data=polis,
                           family=binomial(), 
-                          prior_intercept = normal(0.5, 2, autoscale=FALSE),
-                          prior = normal(0, 0.2, autoscale=FALSE),
+                          prior_intercept = normal(0, 2.5, autoscale=FALSE),
+                          prior = normal(0, 0.1, autoscale=FALSE),
                           prior_PD=TRUE, 
                           iter = 5000, warmup = 1000,
                           chains = 3, thin = 5, refresh = 0
@@ -84,6 +83,8 @@ posterior_vs_prior(polis.rstanarm3, color_by='vs', group_by=TRUE,
 
 ## ----modelFit1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
 ggemmeans(polis.rstanarm3,  ~RATIO) %>% plot(add.data=TRUE)
+#OR
+polis.rstanarm3 %>% ggpredict(~RATIO) %>% plot(add.data=TRUE)
 
 
 ## ----fitModel2a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
@@ -103,7 +104,7 @@ options(width=80)
 
 
 ## ----fitModel2d, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-priors <- prior(normal(0, 10), class = 'Intercept') +
+priors <- prior(normal(0, 2.5), class = 'Intercept') +
     prior(normal(0, 1), class = 'b')
 polis.brm1 = brm(bf(PA|trials(1) ~ RATIO, family = binomial()),
                  data = polis,
@@ -122,12 +123,12 @@ polis.brm1 %>% conditional_effects() %>%  plot(points=TRUE)
 
 
 ## ----normal2h, results='markdown', eval=TRUE----------------------------------
-standist::visualize("normal(0, 10)", xlim = c(-10, 100))
+standist::visualize("normal(0, 2.5)", xlim = c(-10, 100))
 
 
 ## ----fitModel2h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-priors <- prior(normal(0, 10),  class = 'Intercept') +
-    prior(normal(0, 1), class = 'b') 
+priors <- prior(normal(0, 2.5),  class = 'Intercept') +
+    prior(normal(0, 0.1), class = 'b') 
 
 polis.brm2 = brm(bf(PA|trials(1) ~ RATIO, family = binomial()),
                  data = polis,
@@ -142,11 +143,20 @@ polis.brm2 = brm(bf(PA|trials(1) ~ RATIO, family = binomial()),
 
 ## ----fitModel2i, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
 ggemmeans(polis.brm2,  ~RATIO) %>%
-  plot(add.data = TRUE)
+  plot(add.data = TRUE) 
 
 
 ## ----fitModel2j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-polis.brm3 <- polis.brm2 %>% update(sample_prior = 'yes', refresh = 0)
+polis.brm3 <- polis.brm2 %>% update(sample_prior = 'yes', refresh = 0) 
+
+
+## ----fitModel2j1, results='markdown', eval=TRUE, echo = FALSE, hidden=TRUE----
+save(polis.brm3, file = '../ws/testing/polis.brm3.RData')
+
+
+## ----fitModel2j2, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
+ggemmeans(polis.brm3,  ~RATIO) %>%
+  plot(add.data = TRUE) 
 
 
 ## ----posterior2k, results='markdown', eval=TRUE-------------------------------
@@ -157,24 +167,7 @@ polis.brm3 %>% hypothesis('RATIO=0') %>% plot
 
 ## ----fitModel2k, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
 polis.brm3 %>% get_variables()
-polis.brm3 %>%
-    gather_draws(`b_.*|^prior.*`, regex = TRUE) %>%
-    separate(col = .variable, into = c('Type', 'Parameter'), sep='_') %>%
-    mutate(Parameter = ifelse(Parameter == 'b', 'RATIO', Parameter)) %>% 
-    ggplot(aes(x=Type, y = .value)) +
-    stat_pointinterval()+
-    facet_wrap(~Parameter,  scales='free')
-#OR    
-polis.brm3 %>%
-  posterior_samples %>%
-  select(-`lp__`) %>%
-  gather %>%
-  mutate(Type=ifelse(str_detect(key, 'prior'), 'Prior', 'b'),
-         Class=ifelse(str_detect(key, 'Intercept'),  'Intercept',
-               ifelse(str_detect(key, 'sigma'),  'Sigma',  'b'))) %>%
-  ggplot(aes(x=Type,  y=value)) +
-  stat_pointinterval()+
-  facet_wrap(~Class,  scales='free')
+polis.brm3 %>% SUYR_prior_and_posterior() 
 
 
 ## ----fitModel2l, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
@@ -537,6 +530,14 @@ polis.rstanarm3$stanfit %>%
                     ~ HDInterval::hdi(.x),
                     "rhat",
                     "ess_bulk")
+## summarised on fractional scale
+polis.rstanarm3$stanfit %>%
+    as_draws_df() %>%
+    mutate(across(everything(), exp)) %>% 
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
 
 
 ## ----summariseModel1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
@@ -584,6 +585,23 @@ polis.rstanarm3 %>% spread_draws(`(Intercept)`, RATIO)
 # OR via regex
 polis.rstanarm3 %>% spread_draws(`.Intercept.*|RATIO.*`,  regex=TRUE)
 
+## summarised
+polis.rstanarm3 %>%
+    spread_draws(`(Intercept)`, RATIO) %>%
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
+
+## summarised on fractional scale
+polis.rstanarm3 %>%
+    spread_draws(`(Intercept)`, RATIO) %>%
+    mutate(across(everything(), exp)) %>% 
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
+
 
 ## ----summariseModel1f, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 polis.rstanarm3 %>% posterior_samples() %>% as_tibble()
@@ -619,6 +637,16 @@ polis.brm3 %>%
     "rhat",
     "ess_bulk"
   )
+
+## summarised on fractional scale
+polis.brm3 %>%
+    as_draws_df() %>%
+    dplyr::select(starts_with("b_")) %>% 
+    mutate(across(everything(), exp)) %>% 
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
 
 
 ## ----summariseModel2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
@@ -685,6 +713,24 @@ polis.brm3 %>% spread_draws(b_Intercept, b_RATIO)
 # OR via regex
 polis.brm3 %>% spread_draws(`b_.*`,  regex=TRUE)
 
+## summarised
+polis.brm3 %>%
+    as_draws_df() %>%
+    dplyr::select(starts_with("b_")) %>% 
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
+## summarised on fractional scale
+polis.brm3 %>%
+    as_draws_df() %>%
+    dplyr::select(starts_with("b_")) %>% 
+    mutate(across(everything(), exp)) %>% 
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
+
 
 ## ----summariseModel2f, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 polis.brm3 %>% posterior_samples() %>% as_tibble()
@@ -721,11 +767,48 @@ newdata = emmeans(polis.rstanarm3, ~RATIO, at=polis.grid, type='response') %>% a
 head(newdata)
 
 ggplot(newdata, aes(y=prob, x=RATIO)) + 
-geom_point(data=polis, aes(y=PA)) +
-geom_line() + 
-geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
-scale_y_continuous('PA') +
-scale_x_continuous('RATIO') +
+    geom_point(data=polis, aes(y=PA)) +
+    geom_line() + 
+    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
+    scale_y_continuous('PA') +
+    scale_x_continuous('RATIO') +
+    theme_classic()
+
+## spaghetti plot
+newdata = emmeans(polis.rstanarm3, ~RATIO, at=polis.grid) %>%
+    gather_emmeans_draws() %>%
+    mutate(.value = plogis(.value)) 
+newdata %>% head
+ggplot(newdata,  aes(y=.value,  x=RATIO)) +
+  geom_line(aes(group=.draw),  alpha=0.01) +
+  geom_point(data=polis,  aes(y=PA))
+
+
+## ----figureModel1b, results='markdown', eval=TRUE, hidden=TRUE----------------
+## Using emmeans
+polis.grid = with(polis, list(RATIO = seq(min(RATIO), max(RATIO), len=100)))
+
+newdata = emmeans(polis.rstanarm3, ~RATIO, at=polis.grid, type='response') %>% as.data.frame
+head(newdata)
+
+ggplot(newdata, aes(y=prob, x=RATIO)) + 
+    geom_point(data=polis, aes(y=PA)) +
+    geom_line() + 
+    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
+    scale_y_continuous(expression(Presence/absence~of~italic(Uta)~lizards)) +
+    scale_x_continuous(expression(Island~perimeter:Area~ratio)) +
+    theme_classic()
+
+## spaghetti plot
+newdata = emmeans(polis.rstanarm3, ~RATIO, at=polis.grid) %>%
+    gather_emmeans_draws() %>%
+    mutate(.value = plogis(.value)) 
+newdata %>% head
+ggplot(newdata,  aes(y=.value,  x=RATIO)) +
+    geom_line(aes(group=.draw),  alpha=0.01) +
+    geom_point(data=polis,  aes(y=PA)) +
+    scale_y_continuous(expression(Presence/absence~of~italic(Uta)~lizards)) +
+    scale_x_continuous(expression(Island~perimeter:Area~ratio)) +
     theme_classic()
 
 
@@ -747,6 +830,8 @@ newdata %>%
     scale_y_continuous('PA') +
     scale_x_continuous('RATIO') +
     theme_classic()
+
+
 ## Using partial residuals for points
 
 partial.obs <- polis %>%
@@ -763,5 +848,43 @@ newdata %>%
     geom_ribbon(aes(ymin = lower.HPD, ymax = upper.HPD), fill = 'blue', alpha = 0.3) +
     scale_y_continuous('PA') +
     scale_x_continuous('RATIO') +
+    theme_classic()
+
+## spaghetti plot
+newdata = emmeans(polis.brm3, ~RATIO, at=polis.grid) %>%
+    gather_emmeans_draws() %>%
+    mutate(.value = plogis(.value)) 
+newdata %>% head
+ggplot(newdata,  aes(y=.value,  x=RATIO)) +
+  geom_line(aes(group=.draw),  alpha=0.01) +
+  geom_point(data=polis,  aes(y=PA))
+
+
+
+## ----figureModel2b, results='markdown', eval=TRUE, hidden=TRUE----------------
+## Using emmeans
+polis.grid = with(polis, list(RATIO = seq(min(RATIO), max(RATIO), len=100)))
+
+newdata = emmeans(polis.brm3, ~RATIO, at=polis.grid, type='response') %>% as.data.frame
+head(newdata)
+
+ggplot(newdata, aes(y=prob, x=RATIO)) + 
+    geom_point(data=polis, aes(y=PA)) +
+    geom_line() + 
+    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
+    scale_y_continuous(expression(Presence/absence~of~italic(Uta)~lizards)) +
+    scale_x_continuous(expression(Island~perimeter:Area~ratio)) +
+    theme_classic()
+
+## spaghetti plot
+newdata = emmeans(polis.brm3, ~RATIO, at=polis.grid) %>%
+    gather_emmeans_draws() %>%
+    mutate(.value = plogis(.value)) 
+newdata %>% head
+ggplot(newdata,  aes(y=.value,  x=RATIO)) +
+    geom_line(aes(group=.draw),  alpha=0.01) +
+    geom_point(data=polis,  aes(y=PA)) +
+    scale_y_continuous(expression(Presence/absence~of~italic(Uta)~lizards)) +
+    scale_x_continuous(expression(Island~perimeter:Area~ratio)) +
     theme_classic()
 

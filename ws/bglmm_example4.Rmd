@@ -69,6 +69,8 @@ library(rstanarm)
 library(ggeffects)
 library(rstan)
 library(DHARMa)
+library(ggridges)
+source('helperFunctions.R')
 ```
 
 # Scenario
@@ -123,15 +125,6 @@ $\bf{Z}$ represents a cell means model matrix for the random intercepts associat
 
 
 # MCMC sampling diagnostics {.tabset .tabset-faded}
-
-
-
-
-
-</div>
-
-
-
 
 
 # Partial effects plots {.tabset .tabset-faded}

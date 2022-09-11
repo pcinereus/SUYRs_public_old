@@ -442,11 +442,15 @@ loyn.av %>% confint()
 
 ## ----modelSelection4, results='markdown', eval=TRUE, hidden=TRUE--------------
 loyn.glm1a <- loyn.glm1 %>% update(.~scale(log(DIST), scale=FALSE)*scale(log(LDIST), scale=FALSE))
+loyn.glm1a <- loyn.glm1 %>% update(.~scale(log(DIST))*scale(log(LDIST)))
 loyn.glm1b <- loyn.glm1 %>% update(.~scale(log(AREA), scale=FALSE) * fGRAZE)
+loyn.glm1b <- loyn.glm1 %>% update(.~scale(log(AREA)) * GRAZE)
 loyn.glm1c <- loyn.glm1 %>% update(.~scale(log(AREA), scale=FALSE) * fGRAZE * scale(YR.ISOL, scale=FALSE))
 loyn.glm1d <- loyn.glm1 %>% update(.~scale(ALT, scale=FALSE))
+loyn.glm1d <- loyn.glm1 %>% update(.~scale(ALT))
 loyn.null <- loyn.glm1 %>% update(.~1)
 AICc(loyn.glm1a, loyn.glm1b, loyn.glm1c, loyn.glm1d, loyn.null)
+AICc(loyn.glm1a, loyn.glm1b, loyn.glm1d, loyn.null)
 AICc(loyn.glm1a, loyn.glm1b, loyn.glm1c, loyn.glm1d, loyn.null) %>%
     mutate(Model=row.names(.), delta=AICc-AICc[5]) %>%
     dplyr::select(Model, everything())
@@ -464,7 +468,7 @@ loyn.glm1b %>% emtrends(pairwise~fGRAZE, var='AREA')
 
 
 ## ----emeans, results='markdown', eval=TRUE------------------------------------
-loyn.glm1b %>% emmeans(~fGRAZE, type = 'link') %>% pairs() %>% regrid() %>% summary(infer = TRUE)
+loyn.glm1b %>% emmeans(~GRAZE, type = 'link') %>% pairs() %>% regrid() %>% summary(infer = TRUE)
 loyn.glm1b %>% emmeans(~fGRAZE, type = 'link') %>% regrid() %>% pairs() %>% summary(infer = TRUE)
 
 

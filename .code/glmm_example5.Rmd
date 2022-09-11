@@ -270,13 +270,16 @@ owls.glmmTMB1 <- glmmTMB(NCalls ~ 1 + offset(log(BroodSize)) + (1|Nest),
                      REML=TRUE)
 owls.glmmTMB2 <- glmmTMB(NCalls ~ 1 + offset(log(BroodSize)) + (FoodTreatment|Nest),
                      data=owls,
-                     family=poisson(link='log'))
+                     family=poisson(link='log'),
+                     REML = TRUE)
 owls.glmmTMB3 <- glmmTMB(NCalls ~ 1 + offset(log(BroodSize)) + (SexParent|Nest),
                      data=owls,
-                     family=poisson(link='log'))
+                     family=poisson(link='log'),
+                     REML = TRUE)
 owls.glmmTMB4 <- glmmTMB(NCalls ~ 1 + offset(log(BroodSize)) + (FoodTreatment*SexParent|Nest),
                      data=owls,
-                     family=poisson(link='log'))
+                     family=poisson(link='log'),
+                     REML = TRUE)
  AICc(owls.glmmTMB1, owls.glmmTMB2, owls.glmmTMB3, owls.glmmTMB4)
 
 ## owls.glmmTMB1a <- update(owls.glmmTMB1,  REML=TRUE)
@@ -284,7 +287,7 @@ owls.glmmTMB4 <- glmmTMB(NCalls ~ 1 + offset(log(BroodSize)) + (FoodTreatment*Se
 ## owls.glmmTMB1c <- update(owls.glmmTMB1a, ~ . - (1|Nest) + (SexParent|Nest))
 ## owls.glmmTMB1d <- update(owls.glmmTMB1a, ~ . - (1|Nest) + (FoodTreatment*SexParent|Nest))
 
-## AICc(owls.glmmTMB1a, owls.glmmTMB1b, owls.glmmTMB1c, owls.glmmTMB1d)
+AICc(owls.glmmTMB1, owls.glmmTMB2, owls.glmmTMB3, owls.glmmTMB4)
 ```
 
 **Conclusions:**
@@ -298,8 +301,8 @@ owls.glmmTMB4 <- glmmTMB(NCalls ~ 1 + offset(log(BroodSize)) + (FoodTreatment*Se
 ### fixed structure
 
 ```{r fitModel2a, results='markdown', eval=TRUE, hidden=TRUE}
-owls.glmmTMB4a <- update(owls.glmmTMB4, .~. + FoodTreatment*SexParent)
-owls.glmmTMB4b <- update(owls.glmmTMB4, .~. + FoodTreatment+SexParent)
+owls.glmmTMB4a <- update(owls.glmmTMB4, .~. + FoodTreatment*SexParent, REML = FALSE)
+owls.glmmTMB4b <- update(owls.glmmTMB4, .~. + FoodTreatment+SexParent, REML = FALSE)
 AICc(owls.glmmTMB4a, owls.glmmTMB4b)
 anova(owls.glmmTMB4a, owls.glmmTMB4b)
 ## owls.glmmTMB1 <- glmmTMB(NCalls ~ FoodTreatment*SexParent + offset(log(BroodSize))
@@ -525,10 +528,37 @@ different time of the night.  We can explore whether there are any temporal
 autocorrelation patterns.
 
 ```{r validation2h, results='markdown', eval=TRUE, error=TRUE,hidden=TRUE, fig.width=7, fig.height=5, cache=FALSE, message=FALSE, warning=FALSE}
-owls.resid %>% testTemporalAutocorrelation(time=owls$ArrivalTime)
-owls.resid1 <- owls.resid %>% recalculateResiduals(group=interaction(owls$ArrivalTime,  owls$Nest),  aggregateBy = mean)=
-owls.resid1 %>% testTemporalAutocorrelation(time=unique(owls$ArrivalTime))
+##owls.resid %>% testTemporalAutocorrelation(time=owls$ArrivalTime)
+## owls.resid1 <- owls.resid %>%
+##     recalculateResiduals(group=owls$ArrivalTime,
+##                          aggregateBy = mean)
+## owls2 <- owls %>%
+##     group_by(ArrivalTime) %>%
+##     summarise(ArrivalTime = mean(ArrivalTime))
+## owls.resid1 %>% testTemporalAutocorrelation(time=owls2$ArrivalTime)
+owls2 <- owls %>%
+    mutate(TIME = as.numeric(Nest) + ArrivalTime/100 + rnorm(n(),0,0.001))
+owls.resid %>% testTemporalAutocorrelation(time=owls2$TIME)
+## owls2 <- owls %>%
+##     mutate(TIME = numFactor(Nest, ArrivalTime+ rnorm(n(),0,0.001)))
+## owls.resid %>% testTemporalAutocorrelation(time=owls2$TIME)
+
+owls.glmmTMB5 <- owls.glmmTMB4a %>% update(.~.+ou( 0 + numFactor(ArrivalTime) | Nest))
+owls.glmmTMB9 <- owls.glmmTMB4a %>% update(.~.+ar1( 0 + numFactor(ArrivalTime) | Nest),
+                                           family=nbinom2(),
+                                           ziformula = ~ SexParent * FoodTreatment)
+## owls.glmmTMB5 <- owls.glmmTMB4a %>% update(
+##                                            family=nbinom2(),
+##                                            ziformula = ~ SexParent * FoodTreatment)
+## owls.glmmTMB5 <- owls.glmmTMB4a %>% update(.~.+ar1( 0 + numFactor(ArrivalTime) | Nest),
+##                                            control = glmmTMBControl(optimizer = 'optim',
+##                                                                     optArgs = 'Nelder-Mead'))
+owls.resid <- owls.glmmTMB5 %>% simulateResiduals(plot=TRUE, integerResponse = TRUE)
+owls.resid %>% testUniformity()
+owls.resid <- owls.glmmTMB4a %>% simulateResiduals(plot=TRUE, integerResponse = TRUE)
+owls.glmmTMB5 %>% summary()
 ```
+
 
 **Conclusions:**
 
@@ -604,7 +634,7 @@ owls.glmmTMB6 <- glmmTMB(NCalls ~ FoodTreatment*SexParent + offset(log(BroodSize
 Model validation
 
 ```{r fitModel4b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4}
-owls.resid <- owls.glmmTMB4 %>% simulateResiduals(plot=TRUE, integerResponse = TRUE)
+owls.resid <- owls.glmmTMB6 %>% simulateResiduals(plot=TRUE, integerResponse = TRUE)
 owls.resid %>% testZeroInflation()
 owls.resid %>% testDispersion()
 owls.resid %>% testUniformity()
@@ -624,7 +654,7 @@ owls.glmmTMB7 <- glmmTMB(NCalls ~ FoodTreatment*SexParent + offset(log(BroodSize
 Model validation
 
 ```{r fitModel5b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4}
-owls.resid <- owls.glmmTMB5 %>% simulateResiduals(plot=TRUE, integerResponse = TRUE)
+owls.resid <- owls.glmmTMB7 %>% simulateResiduals(plot=TRUE, integerResponse = TRUE)
 owls.resid %>% testZeroInflation()
 owls.resid %>% testDispersion()
 owls.resid %>% testUniformity()
@@ -644,7 +674,7 @@ owls.glmmTMB8 <- glmmTMB(NCalls ~ FoodTreatment*SexParent + offset(log(BroodSize
 Model validation
 
 ```{r fitModel6b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4}
-owls.resid <- owls.glmmTMB6 %>% simulateResiduals(plot=TRUE, integerResponse = TRUE)
+owls.resid <- owls.glmmTMB8 %>% simulateResiduals(plot=TRUE, integerResponse = TRUE)
 owls.resid %>% testZeroInflation()
 owls.resid %>% testDispersion()
 owls.resid %>% testUniformity()
@@ -656,6 +686,7 @@ testResiduals(owls.resid)
 
 ```{r compareModels, results='markdown', eval=TRUE}
 AICc(owls.glmmTMB4a, owls.glmmTMB5,  owls.glmmTMB6, owls.glmmTMB7, owls.glmmTMB8)
+AICc(owls.glmmTMB4a, owls.glmmTMB5,  owls.glmmTMB6, owls.glmmTMB7, owls.glmmTMB8, owls.glmmTMB9)
 ```
 
 **Conclusions:**
@@ -717,6 +748,7 @@ choices:
 off <- owls %>% summarize(Mean=mean(BroodSize))
 as.numeric(off)
 owls.glmmTMB8 %>% ggemmeans(~FoodTreatment+SexParent, offset=log(off$Mean)) %>% plot()
+owls.glmmTMB9 %>% ggemmeans(~FoodTreatment+SexParent, offset=log(off$Mean)) %>% plot()
 ```
 
 - set the offset to 0.  This results in predictions appropriate for a per owl
@@ -724,6 +756,7 @@ owls.glmmTMB8 %>% ggemmeans(~FoodTreatment+SexParent, offset=log(off$Mean)) %>% 
 
 ```{r partialPlots1d2, results='markdown', eval=TRUE}
 owls.glmmTMB8 %>% ggemmeans(~FoodTreatment+SexParent, offset=0) %>% plot()
+owls.glmmTMB9 %>% ggemmeans(~FoodTreatment+SexParent, offset=0) %>% plot()
 ```
 
 </div>
@@ -854,7 +887,8 @@ owls.glmmTMB8 %>% tidy(effects='fixed', conf.int=TRUE,  exponentiate=TRUE)
 
 ```{r r2, results='markdown', eval=TRUE, hidden=TRUE}
 ## owls.glmmTMB8 %>% r.squaredGLMM()
-owls.glmmTMB8 %>% performance::r2_nakagawa()
+## owls.glmmTMB8 %>% performance::r2_nakagawa()
+## owls.glmmTMB9 %>% performance::r2_nakagawa()
 ## owls.glmmTMB8 %>% performance::r2_zeroinflated()
 ```
 

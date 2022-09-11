@@ -53,6 +53,7 @@ solve(t(Xmat) %*% Xmat) %*% t(Xmat) %*% day$BARNACLE
 ## ----fitModel1, results='markdown', eval=TRUE, hidden=TRUE--------------------
 day.glm <- glm(BARNACLE~TREAT, data=day, family='gaussian')
 day.glm1 <- glm(BARNACLE~TREAT, data=day, family='poisson')
+day.glm1 <- glm(BARNACLE~TREAT, data=day, family=poisson(link = "log"))
 
 
 ## ----validateModel1a, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE----
@@ -60,7 +61,7 @@ day.glm %>% autoplot()
 
 
 ## ----validateModel1b, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE----
-day.glm1 %>% autoplot()
+day.glm1 %>% autoplot(which = 1:6)
 
 
 ## ----validateModel2a, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE----
@@ -257,6 +258,14 @@ g1 <- ggplot(newdata, aes(y=rate, x=TREAT)) +
     scale_x_discrete('Treatment', breaks=c('ALG1','ALG2','NB','S'),
        labels=c('Algae spp 1', 'Algae spp 2', 'Naturally bare', 'Scraped bare'))+
     scale_y_continuous(expression(Number~of~newly~recruited~barnacles~(cm^2)))+
+    theme_classic()
+
+g2 <- day.pairwise %>%
+    ggplot(aes(y=ratio,  x=contrast)) +
+    geom_vline(xintercept=1,  linetype='dashed') +
+    geom_pointrange(aes(xmin=asymp.LCL,  xmax=asymp.UCL)) +
+    scale_y_continuous(trans=scales::log2_trans(),
+                       breaks=scales::breaks_log(base=2)) +
     theme_classic()
 
 g2 <- day.pairwise %>%

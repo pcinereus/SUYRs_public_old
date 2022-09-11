@@ -18,6 +18,7 @@ library(ggeffects)  #for partial plots
 library(tidyverse)  #for data wrangling etc
 library(patchwork)
 library(ggridges)   #for ridge plots
+source('helperFunctions.R')
 
 
 ## ----readData, results='markdown', eval=TRUE----------------------------------
@@ -61,11 +62,24 @@ day.rstanarm1 <- update(day.rstanarm,  prior_PD=TRUE)
 ggpredict(day.rstanarm1) %>% plot(add.data=TRUE)
 
 
+## ---- echo = FALSE, eval = FALSE----------------------------------------------
+## day %>%
+##     group_by(TREAT) %>%
+##     summarise(BARNACLE = sample(log(BARNACLE), 1000, replace = TRUE),
+##               R = 1:1000) %>%
+##     ungroup() %>%
+##     group_by(R) %>%
+##     summarise(D = diff(BARNACLE), Comp = 1:3) %>%
+##     ungroup() %>%
+##     group_by(Comp) %>%
+##     summarise(sd(D))
+
+
 ## ----fitModel1h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
 day.rstanarm2= stan_glm(BARNACLE ~ TREAT, data=day,
                         family=poisson(link='log'), 
-                         prior_intercept = normal(3, 5, autoscale=FALSE),
-                         prior = normal(0, 2, autoscale=FALSE),
+                         prior_intercept = normal(3, 1, autoscale=FALSE),
+                         prior = normal(0, 1, autoscale=FALSE),
                          prior_PD=TRUE, 
                          iter = 5000, warmup = 1000,
                          chains = 3, thin = 5, refresh = 0
@@ -132,9 +146,22 @@ day.brm1 %>% conditional_effects() %>%  plot(points=TRUE)
 day.brm1 %>% conditional_effects() %>%  plot(points=TRUE) %>% `[[`(1) + scale_y_log10()
 
 
+## ---- echo = FALSE, eval = FALSE----------------------------------------------
+## day %>%
+##     group_by(TREAT) %>%
+##     summarise(BARNACLE = sample(log(BARNACLE), 1000, replace = TRUE),
+##               R = 1:1000) %>%
+##     ungroup() %>%
+##     group_by(R) %>%
+##     summarise(D = diff(BARNACLE), Comp = 1:3) %>%
+##     ungroup() %>%
+##     group_by(Comp) %>%
+##     summarise(sd(D))
+
+
 ## ----fitModel2h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-priors <- prior(normal(3, 4),  class = 'Intercept') +
-    prior(normal(0, 4), class = 'b')
+priors <- prior(normal(3, 1),  class = 'Intercept') +
+    prior(normal(0, 1), class = 'b')
 day.brm2 <- brm(bf(BARNACLE ~ TREAT,
                    family = poisson(link = 'log')), 
                 data = day,
@@ -167,17 +194,7 @@ day.brm3 %>% get_variables()
 day.brm3 %>% hypothesis('TREATALG2<0') %>% plot()
 day.brm3 %>% hypothesis('TREATNB<0') %>% plot()
 day.brm3 %>% hypothesis('TREATS<0') %>% plot()
-day.brm3 %>%
-  posterior_samples %>%
-  dplyr::select(-`lp__`) %>%
-  pivot_longer(everything(), names_to = 'key') %>% 
-  mutate(Type = ifelse(str_detect(key, 'prior'), 'Prior', 'b'),
-         Class = ifelse(str_detect(key, 'Intercept'),  'Intercept',
-               ifelse(str_detect(key, 'b'),  'b', 'sigma')),
-         Par = str_replace(key, 'b_', '')) %>%
-  ggplot(aes(x = Type,  y = value, color = Par)) +
-  stat_pointinterval(position = position_dodge())+
-  facet_wrap(~Class,  scales = 'free')
+day.brm3 %>% SUYR_prior_and_posterior()
 
 
 ## ----fitModel2l, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
@@ -230,12 +247,12 @@ stan_ess(day.rstanarm3)
 stan_dens(day.rstanarm3, separate_chains = TRUE)
 
 
-## ----modelValidation1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
+## ----modelValidation1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=12----
 day.ggs <- ggs(day.rstanarm3)
 ggs_traceplot(day.ggs)
 
 
-## ----modelValidation1m, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
+## ----modelValidation1m, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=12----
 ggs_autocorrelation(day.ggs)
 
 

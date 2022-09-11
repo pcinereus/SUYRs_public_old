@@ -565,6 +565,8 @@ g + ggforce::geom_mark_hull(data=macnally.mds.scores %>% filter(Score=='sites'),
                       aes(y=NMDS2, x=NMDS1, fill=HABITAT), expand=0, concavity = 10) 
 
 
+## Xmat <- model.matrix(~HABITAT, data=macnally)
+## envfit <- envfit(macnally.mds, env=Xmat)
 Xmat <- model.matrix(~-1+HABITAT, data=macnally)
 colnames(Xmat) <-gsub("HABITAT","",colnames(Xmat))
 envfit <- envfit(macnally.mds, env=Xmat)
@@ -625,10 +627,11 @@ apply(dune[,-1],2, var, na.rm=TRUE)
 dune.dist <- vegdist(wisconsin(dune[,-1]^0.25), "bray")
 
 dune.mds = metaMDS(dune.dist, k=2)
+## autoplot(dune.mds, geom="text")
 plot(dune.mds, type="text", display="sites" )
 
 
-dune.adonis<-adonis(dune.dist~MANAGEMENT,  data=dune)
+dune.adonis<-adonis2(dune.dist~MANAGEMENT,  data=dune)
 dune.adonis
 
 management <-factor(dune$MANAGEMENT, levels=c("NM","BF","HF","SF"))
@@ -636,7 +639,7 @@ mm <- model.matrix(~management)
 head(mm)
 colnames(mm) <-gsub("management","",colnames(mm))
 mm <- data.frame(mm)
-dune.adonis<-adonis(dune.dist~BF+HF+SF, data=mm,
+dune.adonis<-adonis2(dune.dist~BF+HF+SF, data=mm,
                     perm=9999)
 dune.adonis
 
@@ -648,6 +651,7 @@ dune.disp <- betadisper(dune.dist,  group=dune$MANAGEMENT)
 boxplot(dune.disp)
 plot(dune.disp)
 anova(dune.disp)
+permutest(dune.disp, pairwise = TRUE)
 TukeyHSD(dune.disp)
 ## ----end
 
@@ -705,7 +709,8 @@ ggplot(fit, aes(y = SpeciesAlopcune, x = SpeciesAlopacce)) +
 
 ## ---- gllvm spiders
 library(gllvm)
-fitx <- gllvm(y = spider$abund, X=spider$x, family = "negative.binomial")
+fitx <- gllvm(y = spider$abund, X=spider$x, family = "poisson", num.lv = 2)
+fitx <- gllvm(y = spider$abund, X=spider$x, family = "negative.binomial", num.lv = 2)
 fitx
 par(mfrow = c(1,2))
 plot(fitx, which = 1:2)
@@ -737,6 +742,8 @@ Xenv <- data.frame(X, Region = factor(X$Region),
 ftXi <- gllvm(y, Xenv, formula = ~ SOM + pH + Phosp + Region, 
               family = "negative.binomial", row.eff = ~(1|Site), num.lv = 2,
               sd.errors = FALSE)
+ftXi
+ftXph
 
 ph <- Xenv$pH
 rbPal <- colorRampPalette(c('mediumspringgreen', 'blue'))

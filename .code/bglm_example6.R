@@ -17,6 +17,7 @@ library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
 library(tidyverse)  #for data wrangling etc
 library(patchwork)  #for multiple figures
+source('helperFunctions.R')
 
 
 ## ----readData, results='markdown', eval=TRUE----------------------------------

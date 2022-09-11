@@ -64,7 +64,11 @@ library(ggeffects)  #for partial plots
 library(broom.mixed)#for tidying MCMC outputs
 library(tidyverse)  #for data wrangling etc
 library(patchwork)  #for multiple plots
+library(ggridges)   #for ridge plots 
+source('helperFunctions.R')
 ```
+
+inferior-ess-fontify-region
 
 # Scenario
 
@@ -187,10 +191,6 @@ https://jrnold.github.io/bayesian_notes/appendix.html - 20.15.3 Covariance-Corre
 
 
 # MCMC sampling diagnostics {.tabset .tabset-faded}
-
-
-
-# Model validation {.tabset .tabset-faded}
 
 
 

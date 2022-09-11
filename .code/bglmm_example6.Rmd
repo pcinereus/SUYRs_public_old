@@ -25,7 +25,7 @@ output:
     number_sections: yes
     toc_depth: 2
   word_document:
- \\\\\\\\\\\\\\\\\\\ fig_caption: yes
+	fig_caption: yes
 	fig_height: 4
     fig_width: 4
     highlight: tango
@@ -50,7 +50,29 @@ knitr::opts_chunk$set(echo = TRUE)
 Load the necessary libraries
 
 ```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(car)       #for regression diagnostics
+library(broom)     #for tidy output
+library(ggfortify) #for model diagnostics
+library(sjPlot)    #for outputs
+library(knitr)     #for kable
+library(effects)   #for partial effects plots
+library(emmeans)   #for estimating marginal means
+library(MASS)      #for glm.nb
+library(MuMIn)     #for AICc
 library(tidyverse) #for data wrangling
+library(brms)
+library(tidybayes)
+library(bayesplot)
+library(broom.mixed)
+library(rstan)
+library(patchwork)
+library(DHARMa)
+library(standist)   #for visualizing distributions
+library(rstanarm)
+library(ggeffects)
+library(DHARMa)
+library(ggridges)
+source('helperFunctions.R')
 ```
 
 # Scenario
@@ -107,6 +129,19 @@ copper = read_csv('../public/data/copper.csv', trim_ws=TRUE)
 glimpse(copper)
 ```
 
+# Data preparation
+<div class='HIDDEN'>
+
+Let start by declaring the categorical variables and random effect as factors.
+
+```{r dataProcessing, results='markdown', eval=TRUE, hidden=TRUE}
+copper <- copper %>% mutate(COPPER=factor(COPPER),
+                           PLATE=factor(PLATE),
+                           DIST=factor(DIST))
+```
+</div>
+
+
 
 # Exploratory data analysis
 
@@ -121,35 +156,236 @@ and $\bf{X}$ is the model matrix representing the overall intercept and effects 
 Area of the place segment was also incorporated as an offset.
 $\bf{Z}$ represents a cell means model matrix for the random intercepts associated with individual plates.
 
-# Fit the model
+These data are density of worms.  This is not ideal.  It would be
+better to have the actual counts along with the area and then model
+against a Poisson or Negative Binomial along with having an offset for
+area.  Such an approach would allow us to effectively model density
+whilst also being able to fit a model with a distribution that closely
+matches the data generation process.
 
-```{r name, results='markdown', eval=FALSE, hidden=TRUE}
-copper = copper %>% mutate(COPPER=factor(COPPER),
-                           PLATE=factor(PLATE),
-                           DIST=factor(DIST))
+Unfortunately, we only have the densities.  As such, our choice of
+model families is somewhat restricted.  Out choices are:
 
+- Gaussian: assuming normality etc
+- log-normal:
+- Gamma with a log link: so long as we can address the presence of zeros in the data
+- Tweedie
+
+
+<div class='HIDDEN'>
+
+```{r eda1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
 ggplot(copper, aes(y=WORMS, x=DIST, fill=COPPER)) +
   geom_boxplot()
 
 ggplot(copper, aes(y=WORMS, x=DIST, fill=COPPER)) +
     geom_boxplot() +
-    scale_y_log10()
+    scale_y_continuous(trans = scales::pseudo_log_trans())
 
-ggplot(copper, aes(y=WORMS, x=DIST, fill=COPPER)) +
-    geom_boxplot() +
-    scale_y_sqrt()
+ggplot(copper, aes(y = WORMS, x = DIST, colour = COPPER)) +
+    geom_point(aes(x = as.numeric(DIST))) +
+    geom_line(aes(x = as.numeric(DIST), group = PLATE)) +
+    scale_y_continuous(trans = scales::pseudo_log_trans())
+```
+
+In the event that we attempt to model these data against a Gamma
+family, we are going to need a way to handle the zero values.  A Gamma
+distribution has no mass at zero.  One solution is to replace the zero
+values with small values, where small value is defined as half the
+value of the smallest positive value.
+
+```{r eda2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
+copper %>% filter(WORMS > 0) %>%
+    summarise(min(WORMS)/2)
+```
 
 
-ggplot(copper, aes(y=log(WORMS), x=DIST, fill=COPPER)) +
-    geom_boxplot()
+</div>
+
+# Fit the model {.tabset .tabset-faded}
+
+## brms {.tabset .tabset-pills}
+
+### Using default priors
+
+In `brms`, the default priors are designed to be weakly informative.  They are
+chosen to provide moderate regularisation (to help prevent over fitting) and
+help stabilise the computations.
+
+Unlike `rstanarm`, `brms` models must be compiled before they start sampling.
+For most models, the compilation of the stan code takes around 45 seconds.
+
+```{r fitModel2a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE, paged.print=FALSE, tidy.opts = list(width.cutoff = 80)}
+copper.form <- bf(WORMS ~ COPPER * DIST + (1|PLATE),
+                family=Gamma(link='log'))
+options(width=150)
+copper.form %>% get_prior(data = copper)
+options(width=80)
+```
+
+### Defining priors {.tabset .tabset-pills}
+
+The following link provides some guidance about defining priors.
+[https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations]
+
+When defining our own priors, we typically do not want them to be scaled.
+
+If we wanted to define our own priors that were less vague, yet still not likely
+to bias the outcomes, we could try the following priors (mainly plucked out of
+thin air):
+
+- $\beta_0$: normal centred at 3 with a standard deviation of 0.45
+  - mean of 3: since `median(log(copper$WORMS+10.125))` or `median(asinh(copper$WORMS/(2*1))/log(exp(1)))`
+  - sd of 0.45: since `mad(log(copper$WORMS+0.125))` or `mad(asinh(copper$WORMS/(2*1))/log(exp(1)))`
+- $\beta_{1-2}$: normal centred at 0 with a standard deviation of 0.9
+  - sd of 0.9: since `mad(log(copper$WORMS+0.125))/model.matrix(~COPPER*DIST, data = copper) %>% apply(2, sd) `
+- $\beta_{3-5}$: normal centred at 0 with a standard deviation of 1
+  - sd of 1: since `mad(log(copper$WORMS+0.125))/model.matrix(~COPPER*DIST, data = copper) %>% apply(2, sd) `
+- $\beta_{6-11}$: normal centred at 0 with a standard deviation of 1.5
+  - sd of 1.5: since `mad(log(copper$WORMS+0.125))/model.matrix(~COPPER*DIST, data = copper) %>% apply(2, sd) `
+- $\sigma_j$: half-cauchy with parameters 0 and 2.
+- $\omega$: gamma with parameters 0.01 and 0.01.
+- $\Sigma$: decov with:
+  - regularisation: the exponent for a LKJ prior on the correlation matrix.  A
+    value of 1 (default) implies a joint uniform prior
+  - concentration: the concentration parameter for a symmetric Dirichlet
+    distribution.  A value of 1 (default) implies a joint uniform distribution
+  - shape and scale: the shape and scale parameters for a gamma prior on the
+    scale and scale parameters of the
+    decov prior.  A value of 1 for both (default) simplifies the gamma prior to
+    a unit-exponential distribution.
+
+```{r fitModel2h, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
+copper %>% 
+    group_by(COPPER, DIST) %>%
+    summarise(log(median(WORMS)),
+              log(mad(WORMS)))
+standist::visualize("normal(3,0.45)", xlim=c(0,20))
+standist::visualize("student_t(3, 0, 2.5)",
+                    "cauchy(0,2)",
+                    xlim=c(-10,25))
+```
+
+#### log-normal
+
+```{r fitModel2h1, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
+priors <- prior(normal(3, 0.45), class = 'Intercept') +
+    prior(normal(0, 0.9), class = 'b', coef = 'COPPERWeek1') +
+    prior(normal(0, 0.9), class = 'b', coef = 'COPPERWeek2') +
+    prior(normal(0, 1), class = 'b', coef = 'DIST2') +
+    prior(normal(0, 1), class = 'b', coef = 'DIST3') +
+    prior(normal(0, 1), class = 'b', coef = 'DIST4') +
+    prior(normal(0, 1.5), class = 'b') +
+    prior(cauchy(0,2), class = 'sd') +
+    prior(gamma(2,1), class = "sigma")
+          
+copper.form <- bf(I(WORMS + 0.125)~ COPPER * DIST + (1|PLATE),
+                family=lognormal())
+copper.brm2a <- brm(copper.form, 
+                 data = copper,
+                 prior = priors,
+                 sample_prior = 'only',
+                 iter = 5000,
+                 warmup =2500,
+                 chains = 3,
+                 cores = 3,
+                 thin = 10,
+                 refresh = 0,
+                 seed = 123,
+                 control = list(adapt_delta = 0.99)
+                 )
+
+```
+
+```{r partialPlot2h1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+copper.brm2a %>%
+    ggpredict(~COPPER*DIST) %>%
+    plot(add.data = TRUE)
+```
+
+
+#### Gamma
+
+```{r fitModel2h1, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
+priors <- prior(normal(3, 0.45), class = 'Intercept') +
+    prior(normal(0, 0.9), class = 'b', coef = 'COPPERWeek1') +
+    prior(normal(0, 0.9), class = 'b', coef = 'COPPERWeek2') +
+    prior(normal(0, 1), class = 'b', coef = 'DIST2') +
+    prior(normal(0, 1), class = 'b', coef = 'DIST3') +
+    prior(normal(0, 1), class = 'b', coef = 'DIST4') +
+    prior(normal(0, 1.5), class = 'b') +
+    prior(cauchy(0,1), class = 'sd') +
+    prior(gamma(0.01, 0.01), class = "shape")
+          
+copper.form <- bf(I(WORMS + 0.125)~ COPPER * DIST + (1|PLATE),
+                family=Gamma(link='log'))
+copper.brm2b <- brm(copper.form, 
+                 data = copper,
+                 prior = priors,
+                 sample_prior = 'only',
+                 iter = 5000,
+                 warmup =2500,
+                 chains = 3,
+                 cores = 3,
+                 thin = 10,
+                 refresh = 0,
+                 seed = 123,
+                 control = list(adapt_delta = 0.99)
+                 )
+
+```
+
+```{r partialPlot2h2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+copper.brm2b %>%
+    ggpredict(~COPPER*DIST) %>%
+    plot(add.data = TRUE)
+```
+
+The above seem sufficiently wide whilst at the same time not providing
+any encouragement for the sampler to wander off into very unsupported
+areas.
+
+```{r fitModel2h2b, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
+copper.brm3b <- update(copper.brm2b,  
+                       sample_prior = 'yes',
+                       control = list(adapt_delta = 0.99),
+                       refresh = 0)
+save(copper.brm3b, file = '../ws/testing/copper.brm3b')
+```
+
+```{r partialPlot2h2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+copper.brm3b %>%
+    ggpredict(~COPPER*DIST) %>%
+    plot(add.data = TRUE)
+copper.brm3b %>%
+    ggpredict(~DIST*COPPER) %>%
+    plot(add.data = TRUE)
+```
+
+### Plotting prior and posterior
+
+```{r posterior2h2, results='markdown', eval=TRUE}
+copper.brm3b %>% get_variables()
+copper.brm3b %>% hypothesis('COPPERWeek1=0') %>% plot
+copper.brm3b %>% hypothesis('DIST2=0') %>% plot
+copper.brm3b %>% SUYR_prior_and_posterior() 
+```
+
+
+
+
+```{r name, results='markdown', eval=FALSE, hidden=TRUE}
+
 
 copper.rstan = stan_glmer(I(WORMS+0.5)~COPPER*DIST + (1|PLATE),
                           data=copper,
                           family=Gamma(link='log'),
                           chains = 3, iter = 5000, warmup=1000, thin=5,
-                          prior_intercept = normal(0,1, adjust=FALSE),
-                          prior=normal(0,1,adjust=FALSE),
-                          prior_aux = cauchy(0,2,adjust=FALSE))
+                          prior_intercept = normal(0,1, autoscale=FALSE),
+                          prior=normal(0,1,autoscale=FALSE),
+                          prior_aux = cauchy(0,2,autoscale=FALSE))
+prior_summary(copper.rstan)
+
 posterior_vs_prior(copper.rstan, color_by='vs', group_by=TRUE, regex_pars=c('^MONTH','^SITUATION','^[sS]igma'), 
                    facet_args=list(scales='free_y'))
 

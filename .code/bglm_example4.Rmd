@@ -67,6 +67,7 @@ library(ggeffects)  #for partial effects plots
 library(tidyverse)  #for data wrangling etc
 library(patchwork)  #for multiple plots
 library(ggridges)   #for ridge plots 
+source("helperFunctions.R")
 ```
 
 # Scenario
@@ -124,7 +125,10 @@ loyn <- loyn %>% mutate(fGRAZE = factor(GRAZE))
 Model formula:
 $$
 y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
-log(\mu_i) = \boldsymbol{\beta} \bf{X_i}
+log(\mu_i) = \boldsymbol{\beta} \bf{X_i}\\
+\beta_0 \sim{} \mathcal{N}(3,2)\\
+\beta_{1-9} \sim{} \mathcal{N}(0,2)\\
+\sigma \sim{} \mathcal{gamma}(2,1)\\
 $$
 
 where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the additive effects of
@@ -189,20 +193,21 @@ loyn.rstanarm = stan_glm(ABUND ~ scale(log(DIST), scale=FALSE)+
 
 - the warning messages suggest that this model has not performed well
   - there are a large number of **divergent transitions**.  Divergent
-    transitions occur when the sampler is in a 'sharp' part of the posterior and
-    the step length is too large causing the sampler to shoot off the posterior
-    and reject the sample.  This leads to inefficient and ineffective MCMC
-    sampling.  To alleviate this, we can either:
+    transitions occur when the sampler is in a 'sharp' part of the
+    posterior and the step length is too large causing the sampler to
+    shoot off the posterior and reject the sample.  This leads to
+    inefficient and ineffective MCMC sampling.  To alleviate this, we
+    can either:
     - review the model itself - it might be misspecified
-    - adjust the __adaptive delta__ - a parameter that governs the degree of
-      step-length learning that occurs during the warmup stage - the more it
-      learns the less likely the sampler will be to overshoot (although it will
-      take longer to learn)
+    - adjust the __adaptive delta__ - a parameter that governs the
+      degree of step-length learning that occurs during the warmup
+      stage - the more it learns the less likely the sampler will be
+      to overshoot (although it will take longer to learn)
     - review the priors
-  - the largest R-hat value is large.  This suggests that the chains have not
-  converged well
-  - the effective sample sizes is too low, suggesting that there might be issues
-    with the priors.
+  - the largest R-hat value is large.  This suggests that the chains
+  have not converged well
+  - the effective sample sizes is too low, suggesting that there might
+    be issues with the priors.
 
 ```{r fitModel1b, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
 prior_summary(loyn.rstanarm)
@@ -210,9 +215,8 @@ prior_summary(loyn.rstanarm)
 
 **Conclusions:**
 
-- the default priors appear to be overly wide.  It seems that the adjusted
-  priors are neglecting the log link here.
-  
+- the default priors appear to be overly wide.  We will instead define
+  our own priors.
 ### Assessing priors
 
 ```{r fitModel1f, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
@@ -224,15 +228,21 @@ ggemmeans(loyn.rstanarm1,  ~AREA) %>% plot(add.data=TRUE) + scale_y_log10()
  
 **Conclusions:**
 
-- we see that the range of predictions are very wide and the slope could range
-  from strongly negative to strongly positive.
+- we see that the range of predictions are extremely wide and the
+  slope could range from strongly negative to strongly positive.
 
 ### Defining priors
 
-- $\beta_0$: normal centred at 3 with a standard deviation of 10 (on the log
-  scale, these are the equivalent of 20.1 and 22026 respectively)
-- $\beta_1$: normal centred at 0 with a standard deviation of 2.5 (again,
-  consider what this would be on a response scale)
+- $\beta_0$: normal centred at 3 with a standard deviation of 1 (on
+  the log scale, these are the equivalent of 20.1 and 1
+  respectively)
+  - mean of 3: since `mean(log(loyn$ABUND))`
+  - sd of 1: since `sd(log(loyn$ABUND))`
+- $\beta_1$: normal centred at 0 with a standard deviation of 2.5
+  (again, consider what this would be on a response scale)
+  - sd of 1: since `sd(log(loyn$ABUND))/sd(scale(log(loyn$AREA)))`
+    (and since each predictor is scaled, it will be the same for each
+    predictor)
 - $\sigma$: half cauchy (flat Gaussian) prior with a scale of 5.
 
 I will also overlay the raw data for comparison.
@@ -245,8 +255,8 @@ loyn.rstanarm2 <- stan_glm(ABUND ~ scale(log(DIST))+
                               scale(ALT)+
                               scale(YR.ISOL), data=loyn,
                           family=gaussian(link='log'),
-                          prior_intercept = normal(3, 10,  autoscale=FALSE),
-                          prior = normal(0, 2.5, autoscale=FALSE),
+                          prior_intercept = normal(3, 1,  autoscale=FALSE),
+                          prior = normal(0, 1, autoscale=FALSE),
                           prior_aux = cauchy(0, 5),
                           prior_PD=TRUE, 
                           iter = 5000, thin=5,chains = 3, warmup=2000, 
@@ -261,6 +271,7 @@ loyn.rstanarm2 <- stan_glm(ABUND ~ scale(log(DIST))+
 ```{r fitModel1i, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
 ggemmeans(loyn.rstanarm2,  ~AREA) %>%
   plot(add.data=TRUE) + scale_y_log10()
+loyn.rstanarm2 %>% ggpredict() %>% plot(add.data=TRUE, facet=TRUE) + scale_y_log10() 
 ```
 
 Now lets refit, conditioning on the data.
@@ -283,8 +294,14 @@ posterior_vs_prior(loyn.rstanarm3, color_by='vs', group_by=TRUE,
   
 ```{r modelFit1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4}
 #ggemmeans(loyn.rstanarm3,  ~AREA) %>% plot(add.data=TRUE) + scale_y_log10()
+ggpredict(loyn.rstanarm3,  ~AREA) %>%
+  plot(add.data=TRUE) + scale_y_log10()
+loyn.rstanarm3 %>% ggpredict() %>% plot(add.data=TRUE, facet=TRUE) 
 ```
 
+Note that the above are partial plots (effect of one predictor holding
+others constant).  The raw data are not similarly standardised and
+thus may appear not to match the trends...
 
 ## brms {.tabset .tabset-pills}
 
@@ -358,6 +375,8 @@ loyn.brm1 %>%
     plot(points = TRUE, ask = FALSE, plot = FALSE) %>%
     lapply(function(x) x + scale_y_log10()) %>%
     wrap_plots()
+
+loyn.brm1 %>% ggpredict() %>% plot(add.data=TRUE, facet=TRUE) + scale_y_log10() 
 ```
 
 **Conclusions:**
@@ -366,8 +385,21 @@ loyn.brm1 %>%
   from strongly negative to strongly positive.
 
 ### Defining priors
+
+- $\beta_0$: normal centred at 3 with a standard deviation of 1 (on
+  the log scale, these are the equivalent of 20.1 and 1
+  respectively)
+  - mean of 3: since `mean(log(loyn$ABUND))`
+  - sd of 1: since `sd(log(loyn$ABUND))`
+- $\beta_1$: normal centred at 0 with a standard deviation of 2.5
+  (again, consider what this would be on a response scale)
+  - sd of 1: since `sd(log(loyn$ABUND))/sd(scale(log(loyn$AREA)))`
+    (and since each predictor is scaled, it will be the same for each
+    predictor)
+- $\sigma$: half cauchy (flat Gaussian) prior with a scale of 5.
+
 ```{r fitModel2h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
-priors <- prior(normal(0, 10),  class = 'Intercept') +
+priors <- prior(normal(3, 1),  class = 'Intercept') +
     prior(normal(0, 1), class = 'b') +
     prior(gamma(2, 1), class = 'sigma')
  
@@ -398,10 +430,16 @@ loyn.brm2 %>%
     plot(points = TRUE, ask = FALSE, plot = FALSE) %>%
     lapply(function(x) x + scale_y_log10()) %>%
     wrap_plots()
+
+loyn.brm2 %>% ggpredict() %>% plot(add.data=TRUE, facet=TRUE) + scale_y_log10() 
 ```
 
 ```{r fitModel2j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
 loyn.brm3 <- update(loyn.brm2,  sample_prior = 'yes', refresh = 0)
+```
+
+```{r fitModel2j2, results='markdown', eval=TRUE, echo = FALSE, hidden=TRUE}
+save(loyn.brm3, file = '../ws/testing/loyn.brm3.RData')
 ```
 
 ### Plotting prior and posterior
@@ -413,20 +451,8 @@ loyn.brm3 %>% hypothesis('Intercept = 0', class = 'b') %>% plot
 loyn.brm3 %>% hypothesis('Intercept = 0', class = 'prior') %>% plot
 loyn.brm3 %>% hypothesis('scalelogAREA = 0') %>% plot
 loyn.brm3 %>% hypothesis('sigma = 0', class = '') %>% plot
-```
 
-```{r fitModel2m, results='markdown', fig.width = 7, fig.height = 3, eval=TRUE, hidden=TRUE, cache=FALSE}
-loyn.brm3 %>%
-  as_draws_df() %>%
-  select(-`lp__`, -.chain, -.iteration, -.draw) %>%
-  pivot_longer(everything(), names_to = 'key') %>%
-  mutate(Type = ifelse(str_detect(key, 'prior'), 'Prior', 'b'),
-         Class = ifelse(str_detect(key, 'Intercept'),  'Intercept',
-               ifelse(str_detect(key, 'b'),  'b', 'sigma')),
-         Par = str_replace(key, 'b_', '')) %>%
-  ggplot(aes(x = Type,  y = value, color = Par)) +
-  stat_pointinterval(position = position_dodge())+
-  facet_wrap(~Class,  scales = 'free')
+loyn.brm3 %>% SUYR_prior_and_posterior()
 ```
 
 ### Exploring the stan code
@@ -461,10 +487,12 @@ these diagnostics.
 The `bayesplot` package offers a range of MCMC diagnostics as well as Posterior
 Probability Checks (PPC), all of which have a convenient `plot()` interface.
 Lets start with the MCMC diagnostics.
-
+ 
+<details><summary>See list of available diagnostics by name</summary>
 ```{r modelValidation1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8}
 available_mcmc()
 ```
+</details>
 
 Of these, we will focus on:
 
@@ -597,7 +625,7 @@ Of these, we will focus on:
   parameter should look the same (i.e, should not be displaced above or below
   any other trace for that parameter).
 
-```{r modelValidation1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4}
+```{r modelValidation1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=12}
 loyn.ggs <- ggs(loyn.rstanarm3)
 ggs_traceplot(loyn.ggs)
 ```
@@ -607,7 +635,7 @@ ggs_traceplot(loyn.ggs)
 - gss_autocorrelation (autocorrelation function): plots the autocorrelation between successive
   MCMC sample lags for each parameter and each chain
   
-```{r modelValidation1m, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4}
+```{r modelValidation1m, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=12}
 ggs_autocorrelation(loyn.ggs)
 ```
 
@@ -657,9 +685,11 @@ The `bayesplot` package offers a range of MCMC diagnostics as well as Posterior
 Probability Checks (PPC), all of which have a convenient `plot()` interface.
 Lets start with the MCMC diagnostics.
 
+<details><summary>See list of available diagnostics by name</summary>
 ```{r modelValidation2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8}
 available_mcmc()
 ```
+</details>
 
 Of these, we will focus on:
 
@@ -792,7 +822,7 @@ Of these, we will focus on:
   parameter should look the same (i.e, should not be displaced above or below
   any other trace for that parameter).
 
-```{r modelValidation2l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4}
+```{r modelValidation2l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=12}
 loyn.ggs <- loyn.brm3 %>% ggs(inc_warmup = FALSE, burnin = FALSE)
 loyn.ggs %>% ggs_traceplot()
 ```
@@ -802,7 +832,7 @@ loyn.ggs %>% ggs_traceplot()
 - gss_autocorrelation (autocorrelation function): plots the autocorrelation between successive
   MCMC sample lags for each parameter and each chain
   
-```{r modelValidation2m, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4}
+```{r modelValidation2m, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=12}
 loyn.ggs %>% ggs_autocorrelation()
 ```
 
@@ -857,9 +887,11 @@ Post predictive checks provide additional diagnostics about the fit of the
 model.  Specifically, they provide a comparison between predictions drawn from
 the model and the observed data used to train the model.
 
+<details><summary>See list of available diagnostics by name</summary>
 ```{r modelValidation3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4}
 available_ppc()
 ```
+</details>
 
 - dens_overlay: plots the density distribution of the observed data (black line)
 overlayed on top of 50 density distributions generated from draws from the model
@@ -953,9 +985,11 @@ Post predictive checks provide additional diagnostics about the fit of the
 model.  Specifically, they provide a comparison between predictions drawn from
 the model and the observed data used to train the model.
 
+<details><summary>See list of available diagnostics by name</summary>
 ```{r modelValidation5a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4}
 available_ppc()
 ```
+</details>
 
 - dens_overlay: plots the density distribution of the observed data (black line)
 overlayed on top of 50 density distributions generated from draws from the model
@@ -1696,9 +1730,9 @@ bayes_factor(loyn.brm4e,
 
 ### brms
 
-```{r furtherModel2c, results='markdown', cache=TRUE, eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE}
+```{r furtherModel2c, results='markdown', cache=FALSE, eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE}
 loyn.list <- with(loyn, list(AREA = c(min(AREA), mean(AREA), max(AREA))))
-
+ 
 newdata <- loyn.brm4b %>%
     emmeans(~fGRAZE|AREA, at = loyn.list, type = 'response') %>%
     pairs() %>%
@@ -1778,6 +1812,23 @@ ggplot(newdata) +
   geom_line(aes(y=response, x=AREA, color=fGRAZE)) +
   theme_bw() +
   scale_x_log10() + scale_y_log10()
+
+## or honouring the data range
+loyn.nd <- loyn %>%
+    group_by(fGRAZE) %>%
+    expand(AREA = modelr::seq_range(AREA, n=100),
+           DIST = mean(DIST), LDIST = mean(LDIST), ALT = mean(ALT), YR.ISOL = mean(YR.ISOL))
+loyn.rstanarm3 %>%
+    epred_draws(newdata = loyn.nd, value = '.value') %>%
+    median_hdci() %>%
+    ggplot(aes(x = AREA, y = .value, colour = fGRAZE, fill = fGRAZE)) +
+    geom_ribbon(aes(ymin = .lower, ymax = .upper), colour = NA, alpha = 0.3) +
+    geom_line() +
+    geom_point(data = loyn, aes(y = ABUND, x = AREA)) +
+    scale_y_log10() +
+    scale_x_log10() +
+    theme_bw()
+
 ```
 
 ### From the "habitat" model
@@ -1806,6 +1857,21 @@ ggplot(newdata) +
   geom_line(aes(y=response, x=AREA, color=fGRAZE)) +
   theme_bw() +
   scale_x_log10() + scale_y_log10()
+
+## or honouring the data range
+loyn.nd <- loyn %>%
+    group_by(fGRAZE) %>%
+    expand(AREA = modelr::seq_range(AREA, n=100))
+loyn.rstanarm4b %>%
+    epred_draws(newdata = loyn.nd, value = '.value') %>%
+    median_hdci() %>%
+    ggplot(aes(x = AREA, y = .value, colour = fGRAZE, fill = fGRAZE)) +
+    geom_ribbon(aes(ymin = .lower, ymax = .upper), colour = NA, alpha = 0.3) +
+    geom_line() +
+    geom_point(data = loyn, aes(y = ABUND, x = AREA)) +
+    scale_y_log10() +
+    scale_x_log10() +
+    theme_bw()
 ```
 
 
@@ -1837,6 +1903,23 @@ ggplot(newdata) +
   geom_line(aes(y = response, x = AREA, color = fGRAZE)) +
   theme_bw() +
   scale_x_log10() + scale_y_log10()
+
+# or honouring the data range
+loyn.nd <- loyn %>%
+    group_by(fGRAZE) %>%
+    expand(AREA = modelr::seq_range(AREA, n=100),
+           DIST = mean(DIST), LDIST = mean(LDIST), ALT = mean(ALT), YR.ISOL = mean(YR.ISOL))
+loyn.brm3 %>%
+    epred_draws(newdata = loyn.nd, value = '.value') %>%
+    median_hdci() %>%
+    ggplot(aes(x = AREA, y = .value, colour = fGRAZE, fill = fGRAZE)) +
+    geom_ribbon(aes(ymin = .lower, ymax = .upper), colour = NA, alpha = 0.3) +
+    geom_line() +
+    geom_point(data = loyn, aes(y = ABUND, x = AREA)) +
+    scale_y_log10() +
+    scale_x_log10() +
+    theme_bw()
+
 ```
 
 ### From the "habitat" model
@@ -1868,6 +1951,21 @@ ggplot(newdata) +
   geom_line(aes(y = response, x = AREA, color = fGRAZE)) +
   theme_bw() +
   scale_x_log10() + scale_y_log10()
+
+## or honouring the data range
+loyn.nd <- loyn %>%
+    group_by(fGRAZE) %>%
+    expand(AREA = modelr::seq_range(AREA, n=100))
+loyn.brm4b %>%
+    epred_draws(newdata = loyn.nd, value = '.value') %>%
+    median_hdci() %>%
+    ggplot(aes(x = AREA, y = .value, colour = fGRAZE, fill = fGRAZE)) +
+    geom_ribbon(aes(ymin = .lower, ymax = .upper), colour = NA, alpha = 0.3) +
+    geom_line() +
+    geom_point(data = loyn, aes(y = ABUND, x = AREA)) +
+    scale_y_log10() +
+    scale_x_log10() +
+    theme_bw()
 ```
 
 </div>

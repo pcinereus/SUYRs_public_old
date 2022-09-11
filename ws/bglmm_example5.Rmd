@@ -71,6 +71,8 @@ library(standist)   #for visualizing distributions
 library(rstanarm)
 library(ggeffects)
 library(DHARMa)
+library(ggridges)
+source('helperFunctions.R')
 ```
 
 # Scenario
@@ -128,6 +130,7 @@ model matrix for the random intercepts associated with individual nests.
 # Fit the model {.tabset .tabset-faded}
 
 
+
 # MCMC sampling diagnostics {.tabset .tabset-faded}
 
 
@@ -142,15 +145,7 @@ model matrix for the random intercepts associated with individual nests.
 
 
 
-
-
 # Partial effects plots {.tabset .tabset-faded}
-
-
-
-	
-
-
 
 
 # Model investigation {.tabset .tabset-faded}

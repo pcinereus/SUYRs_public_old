@@ -65,6 +65,7 @@ library(tidyverse)  #for data wrangling etc
 library(broom.mixed)#for summarising models
 library(ggeffects)  #for partial effects plots
 theme_set(theme_grey()) #put the default ggplot theme back
+source("helperFunctions.R")
 ```
 
 # Scenario
@@ -127,7 +128,7 @@ numerically awkward.
 
 As a starting point, lets assign the following priors:
 
-- $\beta_0$: Normal prior centred at 0 with a variance of 10
+- $\beta_0$: Normal prior centred at 0 with a variance of 2.5
 - $\beta_1$: Normal prior centred at 0 with a variance of 1
 
 Note, when fitting models through either `rstanarm` or `brms`, the
@@ -142,7 +143,7 @@ $$
 \begin{align}
 y_i &\sim{} \mathcal{Bin}(n, p_i)\\
 ln\left(\frac{p_i}{1-p_i}\right) &= \beta_0 + \beta_1 x_i\\
-\beta_0 &\sim{} \mathcal{N}(0,10)\\
+\beta_0 &\sim{} \mathcal{N}(0,2.5)\\
 \beta_1 &\sim{} \mathcal{N}(0,1)\\
 \end{align}
 $$
@@ -211,30 +212,35 @@ prior_summary(polis.rstanarm)
 
 This tells us:
 
-- for the intercept, it is using a normal prior with a mean of 0.53 and a
-  standard deviation of 2.5.  This mean value is based on the mean of the
-  response variable (rounded up).  The 2.5 is used for all intercepts.  The scale of the
-  prior is then adjusted proportional to the variability in the response, by
-  multiplying 2.5 by the standard deviation of the response (and rounding up).
+- for the intercept: the mean of the response is approximately 0.53.
+  All priors are applied on the link scale (which by default for
+  logistic regression is logit).  `rstanarm` takes the view that if
+  the predictors are centred (which they are by default), the mean of
+  the response will be close to 0.5.  On the logit scale, this equates
+  to a value of 0.  Hence, the prior on intercept is defined as a
+  normal prior with a mean of 0.  For logistic regression, the
+  response values must all be either 0 or 1.  On the logit scale,
+  values can range from -Inf to Inf.  Nevertheless, values on the
+  logit scale that exceed 2.5 in magnitude equate to value on the
+  response scale of either very high or very low (if negative).
+  `rstanarm` therefore uses a standard deviation of 2.5 for the normal
+  prior on the intercept.
   
 ```{r fitModel1c, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
 mean(polis$PA)
-sd(polis$PA)
-2.5*sd(polis$PA)
 ```
 
-- for the coefficients (in this case, just the slope), the default prior is a
-normal prior centred around 0 with a standard deviation of 2.5.  For binomial
-models, this is then
-adjusted for the scale of the data by dividing the 2.5 by the
-standard deviation of the predictor
-(then rounded). 
+- for the coefficients (in this case, just the slope), the default
+prior is a normal prior centred around 0 with a standard deviation of
+2.5 times the reciprocal of the standard deviation of the predictor
+(so 0.14 in this case).
 
 ```{r fitModel1d, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
-2.5/sd(polis$RATIO)
+2.5 * 1/sd(polis$RATIO)
 ```
 
--  there is no auxiliary parameter and thus there is no auxiliary prior 
+-  there are no auxiliary parameters and thus there are no auxiliary priors
+
 ### Assessing priors
 
 One way to assess the priors is to have the MCMC sampler sample purely from the
@@ -278,16 +284,20 @@ If we wanted to define our own priors that were less vague, yet still not likely
 to bias the outcomes, we could try the following priors (mainly plucked out of
 thin air):
 
-- $\beta_0$: normal centred at 0.5 with a standard deviation of 10
-- $\beta_1$: normal centred at 0 with a standard deviation of 1
+- $\beta_0$: normal centred at 0 with a standard deviation of 2.5
+  - mean: 0 - because the mean response when predictors are centred
+    should be approx. 0.5 (which is 0 on logit scale)
+  - sd: 2.5 - since this represents wide priors on logit scale
+- $\beta_1$: normal centred at 0 with a standard deviation of 0.1
+  - sd: 0.1 - since (`2.5 * sd(polis$PA)/sd(polis$RATIO)`) 
 
 I will also overlay the raw data for comparison.
 
 ```{r fitModel1h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
 polis.rstanarm2= stan_glm(PA ~ RATIO, data=polis,
                           family=binomial(), 
-                          prior_intercept = normal(0.5, 2, autoscale=FALSE),
-                          prior = normal(0, 0.2, autoscale=FALSE),
+                          prior_intercept = normal(0, 2.5, autoscale=FALSE),
+                          prior = normal(0, 0.1, autoscale=FALSE),
                           prior_PD=TRUE, 
                           iter = 5000, warmup = 1000,
                           chains = 3, thin = 5, refresh = 0
@@ -319,6 +329,8 @@ posterior_vs_prior(polis.rstanarm3, color_by='vs', group_by=TRUE,
   
 ```{r modelFit1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4}
 ggemmeans(polis.rstanarm3,  ~RATIO) %>% plot(add.data=TRUE)
+#OR
+polis.rstanarm3 %>% ggpredict(~RATIO) %>% plot(add.data=TRUE)
 ```
 
 
@@ -397,6 +409,19 @@ This tells us:
 
 - for the intercept, it is using a student t (flatter normal) prior with a mean of 0 and a
   standard deviation of 2.5.  These are the defaults used for a binomial model.
+  The mean of the response is approximately 0.53.
+  All priors are applied on the link scale (which by default for
+  logistic regression is logit).  `brms` takes the view that if
+  the predictors are centred (which they are by default), the mean of
+  the response will be close to 0.5.  On the logit scale, this equates
+  to a value of 0.  Hence, the prior on intercept is defined as a
+  normal prior with a mean of 0.  For logistic regression, the
+  response values must all be either 0 or 1.  On the logit scale,
+  values can range from -Inf to Inf.  Nevertheless, values on the
+  logit scale that exceed 2.5 in magnitude equate to value on the
+  response scale of either very high or very low (if negative).
+  `brms` therefore uses a standard deviation of 2.5 for the normal
+  prior on the intercept.
   
 
 - for the beta coefficients (in this case, just the slope), the default prior is
@@ -405,7 +430,7 @@ This tells us:
   seem reckless, in practice, it seems to work reasonably well for non-intercept
   beta parameters.
 
-- there is no sigma parameter in a binomial model and therefore there are no
+- there are no distributional parameters in a binomial model and therefore there are no
   additional priors.
   
   
@@ -435,7 +460,7 @@ Default priors for the intercept are already provided (should we wish
 to use them).
 
 ```{r fitModel2d, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
-priors <- prior(normal(0, 10), class = 'Intercept') +
+priors <- prior(normal(0, 2.5), class = 'Intercept') +
     prior(normal(0, 1), class = 'b')
 polis.brm1 = brm(bf(PA|trials(1) ~ RATIO, family = binomial()),
                  data = polis,
@@ -448,6 +473,9 @@ polis.brm1 = brm(bf(PA|trials(1) ~ RATIO, family = binomial()),
                  refresh = 0)
 ```
 
+The following are unlikely to be that useful as the predictions must
+be bound to the range of [0,1].  Hence, it will be difficult to assess
+whether the priors could result in very large or small predictions.
 
 ```{r fitModel2e, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
 polis.brm1 %>% ggemmeans(~RATIO) %>% plot(add.data=TRUE)
@@ -470,21 +498,22 @@ If we wanted to define our own priors that were less vague, yet still not likely
 to bias the outcomes, we could try the following priors (mainly plucked out of
 thin air):
 
-- $\beta_0$: normal centred at 0 with a standard deviation of 10
-- $\beta_1$: normal centred at 0 with a standard deviation of 1
+- $\beta_0$: normal centred at 0 with a standard deviation of 2.5
+  - mean: 0 - because the mean response when predictors are centred
+    should be approx. 0.5 (which is 0 on logit scale)
+  - sd: 2.5 - since this represents wide priors on logit scale
+- $\beta_1$: normal centred at 0 with a standard deviation of 0.1
+  - sd: 0.1 - since (`2.5 * sd(polis$PA)/sd(polis$RATIO)`) 
 
 I will also overlay the raw data for comparison.
 
-Note that on the logit scale, a normal distribution with mean of 0 and
-standard deviation of 10 is huge...
-
 ```{r normal2h, results='markdown', eval=TRUE}
-standist::visualize("normal(0, 10)", xlim = c(-10, 100))
+standist::visualize("normal(0, 2.5)", xlim = c(-10, 100))
 ```
 
 ```{r fitModel2h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
-priors <- prior(normal(0, 10),  class = 'Intercept') +
-    prior(normal(0, 1), class = 'b') 
+priors <- prior(normal(0, 2.5),  class = 'Intercept') +
+    prior(normal(0, 0.1), class = 'b') 
 
 polis.brm2 = brm(bf(PA|trials(1) ~ RATIO, family = binomial()),
                  data = polis,
@@ -499,11 +528,21 @@ polis.brm2 = brm(bf(PA|trials(1) ~ RATIO, family = binomial()),
 
 ```{r fitModel2i, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
 ggemmeans(polis.brm2,  ~RATIO) %>%
-  plot(add.data = TRUE)
+  plot(add.data = TRUE) 
 ```
 
 ```{r fitModel2j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
-polis.brm3 <- polis.brm2 %>% update(sample_prior = 'yes', refresh = 0)
+polis.brm3 <- polis.brm2 %>% update(sample_prior = 'yes', refresh = 0) 
+```
+
+```{r fitModel2j1, results='markdown', eval=TRUE, echo = FALSE, hidden=TRUE}
+save(polis.brm3, file = '../ws/testing/polis.brm3.RData')
+```
+
+
+```{r fitModel2j2, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
+ggemmeans(polis.brm3,  ~RATIO) %>%
+  plot(add.data = TRUE) 
 ```
 
 ### Plotting prior and posterior
@@ -516,24 +555,7 @@ polis.brm3 %>% hypothesis('RATIO=0') %>% plot
 
 ```{r fitModel2k, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
 polis.brm3 %>% get_variables()
-polis.brm3 %>%
-    gather_draws(`b_.*|^prior.*`, regex = TRUE) %>%
-    separate(col = .variable, into = c('Type', 'Parameter'), sep='_') %>%
-    mutate(Parameter = ifelse(Parameter == 'b', 'RATIO', Parameter)) %>% 
-    ggplot(aes(x=Type, y = .value)) +
-    stat_pointinterval()+
-    facet_wrap(~Parameter,  scales='free')
-#OR    
-polis.brm3 %>%
-  posterior_samples %>%
-  select(-`lp__`) %>%
-  gather %>%
-  mutate(Type=ifelse(str_detect(key, 'prior'), 'Prior', 'b'),
-         Class=ifelse(str_detect(key, 'Intercept'),  'Intercept',
-               ifelse(str_detect(key, 'sigma'),  'Sigma',  'b'))) %>%
-  ggplot(aes(x=Type,  y=value)) +
-  stat_pointinterval()+
-  facet_wrap(~Class,  scales='free')
+polis.brm3 %>% SUYR_prior_and_posterior() 
 ```
 
 ### Exploring the stan code
@@ -741,9 +763,11 @@ The `bayesplot` package offers a range of MCMC diagnostics as well as Posterior
 Probability Checks (PPC), all of which have a convenient `plot()` interface.
 Lets start with the MCMC diagnostics.
 
+<details><summary>See list of available diagnostics by name</summary>
 ```{r modelValidation1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4}
 available_mcmc()
 ```
+</details>
 
 Of these, we will focus on:
 
@@ -935,9 +959,11 @@ The `bayesplot` package offers a range of MCMC diagnostics as well as Posterior
 Probability Checks (PPC), all of which have a convenient `plot()` interface.
 Lets start with the MCMC diagnostics.
 
+<details><summary>See list of available diagnostics by name</summary>
 ```{r modelValidation2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4}
 available_mcmc()
 ```
+</details>
 
 Of these, we will focus on:
 
@@ -1131,13 +1157,16 @@ polis.ggs %>% ggs_grb()
 ## rstanarm {.tabset .tabset-pills}
 
 ### pp check
+
 Post predictive checks provide additional diagnostics about the fit of the
 model.  Specifically, they provide a comparison between predictions drawn from
 the model and the observed data used to train the model.
 
+<details><summary>See list of available diagnostics by name</summary>
 ```{r modelValidation3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4}
 available_ppc()
 ```
+</details>
 
 - dens_overlay: plots the density distribution of the observed data (black line)
 overlayed on top of 50 density distributions generated from draws from the model
@@ -1224,13 +1253,16 @@ plot(polis.resids)
 ## brms {.tabset .tabset-pills}
 
 ### pp check
+
 Post predictive checks provide additional diagnostics about the fit of the
 model.  Specifically, they provide a comparison between predictions drawn from
 the model and the observed data used to train the model.
 
+<details><summary>See list of available diagnostics by name</summary>
 ```{r modelValidation5a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4}
 available_ppc()
 ```
+</details>
 
 - dens_overlay: plots the density distribution of the observed data (black line)
 overlayed on top of 50 density distributions generated from draws from the model
@@ -1486,6 +1518,14 @@ polis.rstanarm3$stanfit %>%
                     ~ HDInterval::hdi(.x),
                     "rhat",
                     "ess_bulk")
+## summarised on fractional scale
+polis.rstanarm3$stanfit %>%
+    as_draws_df() %>%
+    mutate(across(everything(), exp)) %>% 
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
 ```
 
 ### gather_draws
@@ -1562,6 +1602,23 @@ polis.rstanarm3 %>% tidy_draws()
 polis.rstanarm3 %>% spread_draws(`(Intercept)`, RATIO)
 # OR via regex
 polis.rstanarm3 %>% spread_draws(`.Intercept.*|RATIO.*`,  regex=TRUE)
+
+## summarised
+polis.rstanarm3 %>%
+    spread_draws(`(Intercept)`, RATIO) %>%
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
+
+## summarised on fractional scale
+polis.rstanarm3 %>%
+    spread_draws(`(Intercept)`, RATIO) %>%
+    mutate(across(everything(), exp)) %>% 
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
 ```
 
 ### posterior_samples
@@ -1659,6 +1716,16 @@ polis.brm3 %>%
     "rhat",
     "ess_bulk"
   )
+
+## summarised on fractional scale
+polis.brm3 %>%
+    as_draws_df() %>%
+    dplyr::select(starts_with("b_")) %>% 
+    mutate(across(everything(), exp)) %>% 
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
 ```
 
 ### gather_draws
@@ -1750,12 +1817,32 @@ polis.brm3 %>% tidy_draws()
 ```
 
 ### spread_draws
-
+	
 ```{r summariseModel2e, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
 polis.brm3 %>% spread_draws(b_Intercept, b_RATIO)
 # OR via regex
 polis.brm3 %>% spread_draws(`b_.*`,  regex=TRUE)
+
+## summarised
+polis.brm3 %>%
+    as_draws_df() %>%
+    dplyr::select(starts_with("b_")) %>% 
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
+## summarised on fractional scale
+polis.brm3 %>%
+    as_draws_df() %>%
+    dplyr::select(starts_with("b_")) %>% 
+    mutate(across(everything(), exp)) %>% 
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
 ```
+
+The above is on a odd ratio scale.
 
 ### posterior_samples
 ```{r summariseModel2f, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
@@ -1818,6 +1905,8 @@ polis.brm3 %>% tidy_draws() %>%
 
 ## rstanarm {.tabset .tabset-pills}
 
+### Simple
+
 ```{r figureModel1a, results='markdown', eval=TRUE, hidden=TRUE}
 ## Using emmeans
 polis.grid = with(polis, list(RATIO = seq(min(RATIO), max(RATIO), len=100)))
@@ -1826,15 +1915,57 @@ newdata = emmeans(polis.rstanarm3, ~RATIO, at=polis.grid, type='response') %>% a
 head(newdata)
 
 ggplot(newdata, aes(y=prob, x=RATIO)) + 
-geom_point(data=polis, aes(y=PA)) +
-geom_line() + 
-geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
-scale_y_continuous('PA') +
-scale_x_continuous('RATIO') +
+    geom_point(data=polis, aes(y=PA)) +
+    geom_line() + 
+    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
+    scale_y_continuous('PA') +
+    scale_x_continuous('RATIO') +
+    theme_classic()
+
+## spaghetti plot
+newdata = emmeans(polis.rstanarm3, ~RATIO, at=polis.grid) %>%
+    gather_emmeans_draws() %>%
+    mutate(.value = plogis(.value)) 
+newdata %>% head
+ggplot(newdata,  aes(y=.value,  x=RATIO)) +
+  geom_line(aes(group=.draw),  alpha=0.01) +
+  geom_point(data=polis,  aes(y=PA))
+```
+
+### Pretty
+
+```{r figureModel1b, results='markdown', eval=TRUE, hidden=TRUE}
+## Using emmeans
+polis.grid = with(polis, list(RATIO = seq(min(RATIO), max(RATIO), len=100)))
+
+newdata = emmeans(polis.rstanarm3, ~RATIO, at=polis.grid, type='response') %>% as.data.frame
+head(newdata)
+
+ggplot(newdata, aes(y=prob, x=RATIO)) + 
+    geom_point(data=polis, aes(y=PA)) +
+    geom_line() + 
+    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
+    scale_y_continuous(expression(Presence/absence~of~italic(Uta)~lizards)) +
+    scale_x_continuous(expression(Island~perimeter:Area~ratio)) +
+    theme_classic()
+
+## spaghetti plot
+newdata = emmeans(polis.rstanarm3, ~RATIO, at=polis.grid) %>%
+    gather_emmeans_draws() %>%
+    mutate(.value = plogis(.value)) 
+newdata %>% head
+ggplot(newdata,  aes(y=.value,  x=RATIO)) +
+    geom_line(aes(group=.draw),  alpha=0.01) +
+    geom_point(data=polis,  aes(y=PA)) +
+    scale_y_continuous(expression(Presence/absence~of~italic(Uta)~lizards)) +
+    scale_x_continuous(expression(Island~perimeter:Area~ratio)) +
     theme_classic()
 ```
 
+
 ## brms {.tabset .tabset-pills}
+
+### Simple
 
 ```{r figureModel2a, results='markdown', eval=TRUE, hidden=TRUE}
 ## Using emmeans
@@ -1854,6 +1985,8 @@ newdata %>%
     scale_y_continuous('PA') +
     scale_x_continuous('RATIO') +
     theme_classic()
+
+
 ## Using partial residuals for points
 
 partial.obs <- polis %>%
@@ -1870,6 +2003,46 @@ newdata %>%
     geom_ribbon(aes(ymin = lower.HPD, ymax = upper.HPD), fill = 'blue', alpha = 0.3) +
     scale_y_continuous('PA') +
     scale_x_continuous('RATIO') +
+    theme_classic()
+
+## spaghetti plot
+newdata = emmeans(polis.brm3, ~RATIO, at=polis.grid) %>%
+    gather_emmeans_draws() %>%
+    mutate(.value = plogis(.value)) 
+newdata %>% head
+ggplot(newdata,  aes(y=.value,  x=RATIO)) +
+  geom_line(aes(group=.draw),  alpha=0.01) +
+  geom_point(data=polis,  aes(y=PA))
+
+```
+
+### Pretty
+
+```{r figureModel2b, results='markdown', eval=TRUE, hidden=TRUE}
+## Using emmeans
+polis.grid = with(polis, list(RATIO = seq(min(RATIO), max(RATIO), len=100)))
+
+newdata = emmeans(polis.brm3, ~RATIO, at=polis.grid, type='response') %>% as.data.frame
+head(newdata)
+
+ggplot(newdata, aes(y=prob, x=RATIO)) + 
+    geom_point(data=polis, aes(y=PA)) +
+    geom_line() + 
+    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
+    scale_y_continuous(expression(Presence/absence~of~italic(Uta)~lizards)) +
+    scale_x_continuous(expression(Island~perimeter:Area~ratio)) +
+    theme_classic()
+
+## spaghetti plot
+newdata = emmeans(polis.brm3, ~RATIO, at=polis.grid) %>%
+    gather_emmeans_draws() %>%
+    mutate(.value = plogis(.value)) 
+newdata %>% head
+ggplot(newdata,  aes(y=.value,  x=RATIO)) +
+    geom_line(aes(group=.draw),  alpha=0.01) +
+    geom_point(data=polis,  aes(y=PA)) +
+    scale_y_continuous(expression(Presence/absence~of~italic(Uta)~lizards)) +
+    scale_x_continuous(expression(Island~perimeter:Area~ratio)) +
     theme_classic()
 ```
 

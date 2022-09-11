@@ -54,13 +54,18 @@ library(rstanarm)   #for fitting models in STAN
 library(brms)       #for fitting models in STAN
 library(coda)       #for diagnostics
 library(bayesplot)  #for diagnostics
+library(ggmcmc)     #for MCMC diagnostics
 library(rstan)      #for interfacing with STAN
 library(emmeans)    #for marginal means etc
 library(broom)      #for tidying outputs
 library(DHARMa)     #for residual diagnostics
 library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
+library(broom.mixed)#for tidying MCMC outputs
 library(tidyverse)  #for data wrangling etc
+library(patchwork)  #for multiple plots
+library(ggridges)   #for ridge plots 
+source('helperFunctions.R')
 ```
 
 # Scenario
@@ -108,9 +113,13 @@ FISHID   MASS    TRIAL             SMR\_contr   CHANGE
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-norin = read_csv('../data/norin.csv', trim_ws=TRUE)
+norin <- read_csv('../data/norin.csv', trim_ws=TRUE)
 glimpse(norin)
 ```
+
+We should start by declaring any categorical variables (including an varying
+effects) as predictors.
+
 
 
 # Exploratory data analysis
@@ -118,7 +127,9 @@ glimpse(norin)
 Model formula:
 $$
 y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
-\mu_i =\boldsymbol{\beta} \bf{X_i} + \boldsymbol{\gamma} \bf{Z_i}
+\mu_i =\boldsymbol{\beta} \bf{X_i} + \boldsymbol{\gamma} \bf{Z_i}\\
+\beta_0 \sim{} \mathcal{N}(16, 35)\\
+\beta_{1-6} \sim{} \mathcal{N}(0, 70)\\
 $$
 
 where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of the fixed and random effects parameters respectively 
@@ -126,21 +137,33 @@ and $\bf{X}$ is the  model matrix representing the overall intercept and effects
 $\bf{Z}$ represents a cell means model matrix for the random intercepts associated with individual fish.
 
 
-# Fit the model
-
-## rstanarm
 
 
-## brms
+# Fit the model {.tabset .tabset-faded}
 
 
 
-# Model validation
-	
-# Model investigation / hypothesis testing
-	
-# Predictions
-	
-# Summary figures
-	
+
+# MCMC sampling diagnostics {.tabset .tabset-faded}
+
+
+
+# Partial effects plots {.tabset .tabset-faded}
+
+
+
+# Model investigation {.tabset .tabset-faded}
+
+
+
+# Predictions / further analyses {.tabset .tabset-faded}
+
+
+
+# Summary figures {.tabset .tabset-faded}
+
+
 # References
+
+
+

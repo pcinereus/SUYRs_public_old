@@ -150,7 +150,13 @@ interact.gbm(fish.gbm, env,c(1,10), n.tree=best.iter)
 interact.gbm(fish.gbm, env,c(2,10), n.tree=best.iter)
 interact.gbm(fish.gbm, env,c(1,2,10), n.tree=best.iter)
 
-fish.gbm %>% pdp::partial(pred.var=c(1),  n.trees=best.iter, recursive=FALSE) %>% autoplot
+fish.gbm %>% pdp::partial(pred.var=c('DAS', 'OXY'),  n.trees=best.iter, recursive=FALSE) %>%
+    autoplot
+fish.gbm %>% pdp::partial(pred.var=c('DAS', 'OXY'),
+                          n.trees=best.iter,
+                          recursive=FALSE,
+                          inv.link = exp) %>%
+    autoplot
 fish.gbm %>% pdp::partial(pred.var=c(1, 10),  n.trees=best.iter, recursive=FALSE) %>% autoplot
 fish.gbm %>% pdp::partial(pred.var=c(2, 10),  n.trees=best.iter, recursive=FALSE) %>% autoplot
 
@@ -185,19 +191,19 @@ for (i in 1:(length(terms)-1)) {
 fish.int %>% arrange(-H.stat)
 
 
-## ----gbmstep1, eval=TRUE, hidden=TRUE, cache=FALSE----------------------------
-fish.gbm1 <- dismo::gbm.step(data=cbind(fish, env) %>% as.data.frame, gbm.x=2:11, gbm.y=1,
-                        tree.complexity=5,
-                        learning.rate=0.001,
-                      n.minobsinnode = 2,
-                        bag.fraction=0.5,
-                      n.train = 1,
-                        n.trees=10000,
-                        family='poisson')
+## ----gbmstep1, eval=FALSE, hidden=TRUE, cache=FALSE---------------------------
+## fish.gbm1 <- dismo::gbm.step(data=cbind(fish, env) %>% as.data.frame, gbm.x=2:11, gbm.y=1,
+##                         tree.complexity=5,
+##                         learning.rate=0.001,
+##                       n.minobsinnode = 2,
+##                         bag.fraction=0.5,
+##                       n.train = 1,
+##                         n.trees=10000,
+##                         family='poisson')
 
 
-## ----gbmstep2, eval=TRUE, hidden=TRUE, cache=FALSE----------------------------
-summary(abalone.gbm1)
+## ----gbmstep2, eval=FALSE, hidden=TRUE, cache=FALSE---------------------------
+## summary(abalone.gbm1)
 
 
 ## ----randomForest, results='markdown', eval=TRUE, hidden=TRUE-----------------

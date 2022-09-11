@@ -70,6 +70,8 @@ library(ggeffects)
 library(bayesplot)
 library(rstan)
 library(DHARMa)
+library(ggridges)
+source('helperFunctions.R')
 ```
 
 # Scenario

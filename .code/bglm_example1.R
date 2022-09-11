@@ -457,6 +457,7 @@ fert.brm3 %>% mcmc_plot(type = 'violin')
 
 
 ## ----modelValidation2g, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
+stan_trace(fert.brm3$fit)
 fert.brm3$fit %>% stan_trace()
 fert.brm3$fit %>% stan_trace(inc_warmup = TRUE)
 
@@ -1640,7 +1641,9 @@ ggplot(newdata,  aes(y=.value,  x=FERTILIZER)) +
 
 ## ----summaryFig2a, results='markdown', eval=TRUE, hidden=TRUE-----------------
 fert.grid <- with(fert, list(FERTILIZER = modelr::seq_range(FERTILIZER, n = 100)))
-newdata <- fert.brm3 %>% emmeans(~FERTILIZER, at=fert.grid) %>% as.data.frame
+newdata <- fert.brm3 %>%
+    emmeans(~FERTILIZER, at=fert.grid) %>%
+    as.data.frame
 head(newdata)
 
 ggplot(newdata, aes(y=emmean, x=FERTILIZER)) + 

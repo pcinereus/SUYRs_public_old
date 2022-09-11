@@ -23,6 +23,8 @@ library(ggeffects)
 library(bayesplot)
 library(rstan)
 library(DHARMa)
+library(ggridges)
+source('helperFunctions.R')
 
 
 ## ----readData, results='markdown', eval=TRUE----------------------------------
@@ -68,7 +70,7 @@ starling.rstanarm %>% prior_summary()
 
 
 ## ----fitModel1d, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
-2.5*sd(starling$MASS)/sd(model.matrix(~MONTH*SITUATION, starling)[, 2])
+2.5*sd(starling$MASS)/apply(model.matrix(~MONTH*SITUATION, starling)[,-1], 2, sd)
 
 
 ## ----fitModel1e, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
@@ -80,15 +82,15 @@ starling.rstanarm1 <- update(starling.rstanarm,  prior_PD=TRUE)
 
 
 ## ----fitModel1g, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
-ggpredict(starling.rstanarm1) %>% plot(add.data=TRUE)
+starling.rstanarm1 %>% ggpredict(~MONTH*SITUATION) %>% plot(add.data=TRUE)
 
 
 ## ----fitModel1h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-tobacco.rstanarm2 <- stan_glmer(MASS ~ MONTH*SITUATION+(1|BIRD),
+starling.rstanarm2 <- stan_glmer(MASS ~ MONTH*SITUATION+(1|BIRD),
                                 data = starling,
                                 family = gaussian(), 
-                                prior_intercept = normal(84, 20, autoscale = FALSE),
-                                prior = normal(0, 40, autoscale = FALSE),
+                                prior_intercept = normal(84, 17, autoscale = FALSE),
+                                prior = normal(0, c(33, 39, 39, 39, 50, 50, 50), autoscale = FALSE),
                                 prior_aux=rstanarm::exponential(0.15, autoscale = FALSE),
                                 prior_covariance = decov(1, 1, 1, 1), 
                                 prior_PD = TRUE, 
@@ -101,9 +103,23 @@ tobacco.rstanarm2 <- stan_glmer(MASS ~ MONTH*SITUATION+(1|BIRD),
 
 
 ## ----fitModel1i, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
-tobacco.rstanarm2 %>%
+starling.rstanarm2 %>%
     ggpredict(~SITUATION*MONTH) %>%
     plot(add.data = TRUE)
+
+
+## ----fitModel1j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE, dependson='fitModel1h'----
+starling.rstanarm3 <- update(starling.rstanarm2,  prior_PD=FALSE)
+
+
+## ----modelFit1k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8----
+posterior_vs_prior(starling.rstanarm3, color_by='vs', group_by=TRUE,
+                   facet_args=list(scales='free_y'))
+
+
+## ----modelFit1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
+ggemmeans(starling.rstanarm3,  ~SITUATION*MONTH) %>% plot(add.data=TRUE)
+ggpredict(starling.rstanarm3,  ~SITUATION*MONTH) %>% plot(add.data=TRUE)
 
 
 ## ----fitModel2a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE, paged.print=FALSE, tidy.opts = list(width.cutoff = 80)----
@@ -123,23 +139,27 @@ starling %>%
 
 standist::visualize("normal(84,20)", xlim=c(0,200))
 standist::visualize("student_t(3, 0, 5.9)",
-                    "gamma(2,0.5)",
-                    "cauchy(0,1)",
+                    "gamma(6.5,1)",
+                    "cauchy(0,2.5)",
                     xlim=c(-10,25))
 
 
 ## ----fitModel2h1, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE------
-priors <- prior(normal(84,5), class = 'Intercept') +
-    prior(normal(0, 5), class = 'b') +
-    prior(gamma(2,0.5), class = 'sigma') +
-    prior(cauchy(0,1), class = 'sd') 
+priors <- prior(normal(84,5.9), class = 'Intercept') +
+    prior(normal(0, 13), class = 'b', coef = "MONTHJan") +
+    prior(normal(0, 15), class = 'b', coef = "SITUATIONnestMbox") +
+    prior(normal(0, 15), class = 'b', coef = "SITUATIONother") +
+    prior(normal(0, 15), class = 'b', coef = "SITUATIONtree") +
+    prior(normal(0, 20), class = 'b') +
+    prior(gamma(6.5,1), class = 'sigma') +
+    prior(cauchy(0,2.5), class = 'sd') 
 starling.form <- bf(MASS ~ MONTH*SITUATION+(1|BIRD),
                      family = gaussian()
                    )
 starling.brm2 <- brm(starling.form, 
                   data = starling,
                   prior = priors,
-                  sample_prior = 'yes',
+                  sample_prior = 'only',
                   iter = 5000,
                   warmup = 1000,
                   chains = 3,
@@ -147,10 +167,52 @@ starling.brm2 <- brm(starling.form,
                   refresh = 0
                   )
 
+
+## ----partialPlot2h1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+starling.brm2 %>%
+    ggpredict(~SITUATION*MONTH) %>%
+    plot(add.data = TRUE)
+
+
+## ----fitModel2h1b, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-----
+starling.brm3 <- update(starling.brm2,  
+                       sample_prior = 'yes',
+                       control = list(adapt_delta = 0.99),
+                       refresh = 0)
+save(starling.brm3, file = '../ws/testing/starling.brm3')
+
+
+## ----partialPlot2h1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+starling.brm3 %>%
+    ggpredict(~SITUATION*MONTH) %>%
+    plot(add.data = TRUE)
+
+
+## ----posterior2h2, results='markdown', eval=TRUE------------------------------
+starling.brm3 %>% get_variables()
+starling.brm3 %>% hypothesis('MONTHJan=0') %>% plot
+starling.brm3 %>% hypothesis('SITUATIONnestMbox=0') %>% plot
+
+
+## ----posterior2h2a, results='markdown', eval=TRUE, fig.width = 7, fig.height = 5----
+starling.brm3 %>% SUYR_prior_and_posterior()
+
+
+## ----fitModel2h3, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE------
+priors <- prior(normal(84,5.9), class = 'Intercept') +
+    prior(normal(0, 13), class = 'b', coef = "MONTHJan") +
+    prior(normal(0, 15), class = 'b', coef = "SITUATIONnestMbox") +
+    prior(normal(0, 15), class = 'b', coef = "SITUATIONother") +
+    prior(normal(0, 15), class = 'b', coef = "SITUATIONtree") +
+    prior(normal(0, 20), class = 'b') +
+    prior(gamma(6.5,1), class = 'sigma') +
+    prior(cauchy(0,2.5), class = 'sd') +
+    prior(lkj_corr_cholesky(1), class = 'L')
+
 starling.form <- bf(MASS ~ MONTH*SITUATION+(MONTH|BIRD),
                      family = gaussian()
                    )
-starling.brm3 <-  brm(starling.form, 
+starling.brm4 <- brm(starling.form, 
                   data = starling,
                   prior = priors,
                   sample_prior = 'yes',
@@ -159,21 +221,23 @@ starling.brm3 <-  brm(starling.form,
                   chains = 3,
                   thin = 5,
                   refresh = 0,
-                  control = list(adapt_delta=0.99)
+                  control = list(adapt_delta = 0.99)
                   )
-
-(l.1 <- starling.brm2 %>% loo())
-(l.2 <- starling.brm3 %>% loo())
-loo_compare(l.1, l.2)
+save(starling.brm4, file = '../ws/testing/starling.brm4')
 
 
 ## ----posterior2k, results='markdown', eval=TRUE-------------------------------
-starling.brm3 %>% get_variables()
-starling.brm3 %>% hypothesis('MONTHJan=0') %>% plot
+starling.brm4 %>% get_variables()
+starling.brm4 %>% hypothesis('MONTHJan=0') %>% plot
+starling.brm4 %>% hypothesis('SITUATIONnestMbox=0') %>% plot
+
+
+## ----posterior2k1, results='markdown', eval=TRUE, fig.width = 7, fig.height = 5----
+starling.brm4 %>% SUYR_prior_and_posterior()
 
 
 ## ----posterior2k2, results='markdown', eval=TRUE, fig.width=10, fig.height=4----
-starling.brm3 %>%
+starling.brm4 %>%
   posterior_samples %>%
   dplyr::select(-`lp__`) %>%
   pivot_longer(everything(), names_to = 'key') %>% 
@@ -182,16 +246,27 @@ starling.brm3 %>%
          ## Class = ifelse(str_detect(key, 'Intercept'),  'Intercept',
          ##         ifelse(str_detect(key, 'b'),  'b', 'sigma')),
          Class = case_when(
-             str_detect(key, '(^b|^prior).*Intercept$') ~ 'Intercept',
-             str_detect(key, 'b_SITUATION.*|b_MONTH.*|prior_b') ~ 'TREATMENT',
-             str_detect(key, 'sd') ~ 'sd',
-             str_detect(key, '^cor|prior_cor') ~ 'cor',
-             str_detect(key, 'sigma') ~ 'sigma'),
+               str_detect(key, '(^b|^prior).*Intercept$') ~ 'Intercept',
+               str_detect(key, 'b_SITUATION.*|prior_b_SITUATION.*') &
+               !str_detect(key, '.*:.*') ~ 'SITUATION',
+               str_detect(key, 'b_MONTH.*|prior_b_MONTH.*') &
+               !str_detect(key, '.*\\:.*') ~ 'MONTH',
+               str_detect(key, '.*\\:.*|prior_b_.*\\:.*') ~ 'Interaction',
+               str_detect(key, 'sd') ~ 'sd',
+               str_detect(key, '^cor|prior_cor') ~ 'cor',
+             str_detect(key, 'sigma') ~ 'sigma'
+             ),
          Par = str_replace(key, 'b_', '')) %>%
   ggplot(aes(x = Type,  y = value, color = Par)) +
-  stat_pointinterval(position = position_dodge(), show.legend = FALSE)+
+  stat_pointinterval(position = position_dodge())+
   facet_wrap(~Class,  scales = 'free')
+select(key, Class, Par) %>% distinct() 
 
+
+## ----fitModel2h3a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-----
+(l.1 <- starling.brm3 %>% loo())
+(l.2 <- starling.brm4 %>% loo())
+loo_compare(l.1, l.2)
 
 
 ## ----modelValidation2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
@@ -200,14 +275,16 @@ available_mcmc()
 
 ## ----modelValidation2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
 pars <- starling.brm3 %>% get_variables()
-pars <- pars %>% str_extract('^b.Intercept|^b_SITUTATION.*|^b_MONTH.*|[sS]igma|^sd.*') %>%
+pars <- pars %>%
+    str_extract('^b_.*|[sS]igma|^sd.*') %>%
+    ## str_extract('^b.Intercept|^b_SITUTATION.*|^b_MONTH.*|[sS]igma|^sd.*') %>%
     na.omit()
 pars
-starling.brm3 %>% mcmc_plot(type='trace', pars = pars)
+starling.brm3 %>% mcmc_plot(type='trace', variable = pars)
 
 
 ## ----modelValidation2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-starling.brm3 %>% mcmc_plot(type='acf_bar', pars = pars)
+starling.brm3 %>% mcmc_plot(type='acf_bar', variable = pars)
 
 
 ## ----modelValidation2d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
@@ -219,8 +296,8 @@ starling.brm2 %>% mcmc_plot(type='neff_hist')
 
 
 ## ----modelValidation2f, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-starling.brm3 %>% mcmc_plot(type='combo', pars = pars)
-starling.brm3 %>% mcmc_plot(type='violin', pars = pars)
+starling.brm3 %>% mcmc_plot(type='combo', variable = pars)
+starling.brm3 %>% mcmc_plot(type='violin', variable = pars)
 
 
 ## ----modelValidation2g, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
@@ -297,7 +374,7 @@ starling.brm3 %>% pp_check(group = 'BIRD', type = 'intervals')
 
 
 ## ----modelValidation6a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-preds <- starling.brm3 %>% posterior_predict(nsamples = 250,  summary = FALSE)
+preds <- starling.brm3 %>% posterior_predict(ndraws = 250,  summary = FALSE)
 starling.resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = starling$MASS,
                             fittedPredictedResponse = apply(preds, 2, median),
@@ -319,7 +396,7 @@ starling.brm3 %>%
 
 ## ----partialPlot2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 starling.brm3 %>%
-    ggemmeans(~SITUATION|MONTH) %>%
+    ggemmeans(~SITUATION*MONTH) %>%
     plot(add.data = TRUE) 
 
 
@@ -349,18 +426,6 @@ starling.brm3 %>% summary()
 starling.sum <- summary(starling.brm3)
 
 
-## ----summariseModel2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-starling.brm3$fit %>%
-    tidyMCMC(estimate.method = 'median',
-             conf.int = TRUE,  conf.method = 'HPDinterval',
-             rhat = TRUE, ess = TRUE)
-
-## ----summariseModel2b1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=FALSE----
-starling.tidy <- tidyMCMC(starling.brm3$fit, estimate.method='median',
-                         conf.int=TRUE,  conf.method='HPDinterval',
-                         rhat=TRUE, ess=TRUE)
-
-
 ## ----summariseModel2bm, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=FALSE----
 starling.brm3 %>% as_draws_df()
 starling.brm3 %>%
@@ -371,6 +436,18 @@ starling.brm3 %>%
     "rhat",
     "ess_bulk"
   )
+
+
+## ----summariseModel2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+starling.brm3$fit %>%
+    tidyMCMC(estimate.method = 'median',
+             conf.int = TRUE,  conf.method = 'HPDinterval',
+             rhat = TRUE, ess = TRUE)
+
+## ----summariseModel2b1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=FALSE----
+starling.tidy <- tidyMCMC(starling.brm3$fit, estimate.method='median',
+                         conf.int=TRUE,  conf.method='HPDinterval',
+                         rhat=TRUE, ess=TRUE)
 
 
 ## ----summariseModel2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
@@ -414,6 +491,60 @@ starling.brm3 %>%
 starling.brm3$fit %>% plot(type='intervals') 
 
 
+## ----summariseModel2ka, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
+starling.brm4 %>% 
+    gather_draws(`^b_.*`, regex=TRUE) %>% 
+    filter(.variable != 'b_Intercept') %>%
+    ggplot() + 
+    stat_halfeye(aes(x=.value,  y=.variable)) +
+    facet_wrap(~.variable, scales='free')
+
+starling.brm4 %>% 
+    gather_draws(`^b_.*`, regex=TRUE) %>% 
+    filter(.variable != 'b_Intercept') %>%
+    ggplot() + 
+    stat_halfeye(aes(x=.value,  y=.variable)) +
+    geom_vline(xintercept = 0, linetype = 'dashed')
+
+
+## ----summariseModel2c7, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
+starling.brm4 %>% 
+    gather_draws(`^b_.*`, regex=TRUE) %>% 
+    filter(.variable != 'b_Intercept') %>%
+    ggplot() +  
+    geom_density_ridges(aes(x=.value, y = .variable), alpha=0.4) +
+    geom_vline(xintercept = 0, linetype = 'dashed')
+##Or in colour
+starling.brm4 %>% 
+    gather_draws(`^b_.*`, regex=TRUE) %>% 
+    filter(.variable != 'b_Intercept') %>%
+    ggplot() + 
+    geom_density_ridges_gradient(aes(x=(.value),
+                                     y = .variable,
+                                     fill = stat(x)),
+                                 alpha=0.4, colour = 'white',
+                                 quantile_lines = TRUE,
+                                 quantiles = c(0.025, 0.975)) +
+    geom_vline(xintercept = 1, linetype = 'dashed') +
+    scale_x_continuous() +
+    scale_fill_viridis_c(option = "C") 
+
+## Fractional scale
+starling.brm4 %>% 
+    gather_draws(`^b_.*`, regex=TRUE) %>% 
+    filter(.variable != 'b_Intercept') %>%
+    ggplot() + 
+    geom_density_ridges_gradient(aes(x=exp(.value),
+                                     y = .variable,
+                                     fill = stat(x)),
+                                 alpha=0.4, colour = 'white',
+                                 quantile_lines = TRUE,
+                                 quantiles = c(0.025, 0.975)) +
+    geom_vline(xintercept = 1, linetype = 'dashed') +
+    scale_x_continuous(trans = scales::log2_trans()) +
+    scale_fill_viridis_c(option = "C") 
+
+
 ## ----summariseModel2d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 starling.brm3 %>% tidy_draws()
 
@@ -433,9 +564,9 @@ starling.brm3 %>%
 starling.brm3 %>%
     bayes_R2(re.form = ~(1|BIRD), summary=FALSE) %>%
     median_hdci
-starling.brm3 %>%
-    bayes_R2(re.form = ~(MONTH|BIRD), summary=FALSE) %>%
-    median_hdci
+## starling.brm4 %>%
+##     bayes_R2(re.form = ~(MONTH|BIRD), summary=FALSE) %>%
+##     median_hdci
 
 
 ## ----postHoc1a, results='markdown', eval=TRUE, echo=1,hidden=TRUE-------------
@@ -451,6 +582,17 @@ starling.brm3 %>%
     emmeans(~MONTH|SITUATION) %>%
     pairs() 
 
+## To get percentage change
+starling.brm3 %>%
+    emmeans(~MONTH|SITUATION) %>%
+    regrid(transform = 'log') %>%
+    pairs(reverse = TRUE) %>%
+    regrid() %>% 
+    gather_emmeans_draws() %>%
+    mutate(.value = 100*(.value - 1)) %>%
+    median_hdci()
+
+## OR if you want both absolute and percentage change
 starling.em <- starling.brm3 %>%
     emmeans(~MONTH|SITUATION) %>%
     gather_emmeans_draws() %>%
@@ -463,7 +605,7 @@ starling.em %>%
     ggplot() +
     geom_vline(xintercept = 0, linetype = "dashed") +
     geom_vline(xintercept = 10, linetype = "dashed", color='red') +
-    geom_halfeyeh(aes(x = PEff, y = SITUATION)) +
+    stat_halfeye(aes(x = PEff, y = SITUATION)) +
     theme_classic()
 
 starling.em %>% median_hdci(PEff)

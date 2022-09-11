@@ -5,6 +5,7 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
 ## ----libraries, results='markdown', eval=TRUE---------------------------------
 library(rstanarm)   #for fitting models in STAN
 library(brms)       #for fitting models in STAN
+library(standist)   #for exploring distributions
 library(coda)       #for diagnostics
 library(bayesplot)  #for diagnostics
 library(ggmcmc)     #for MCMC diagnostics
@@ -13,15 +14,19 @@ library(rstan)      #for interfacing with STAN
 library(emmeans)    #for marginal means etc
 library(broom)      #for tidying outputs
 library(tidybayes)  #for more tidying outputs
+library(HDInterval) #for HPD intervals
 library(ggeffects)  #for partial plots
 library(tidyverse)  #for data wrangling etc
 library(broom.mixed)#for summarising models
+library(posterior)  #for posterior draws
 library(ggeffects)  #for partial effects plots
+library(patchwork)  #for multi-panel figures
 theme_set(theme_grey()) #put the default ggplot theme back
+source('helperFunctions.R')
 
 
 ## ----readData, results='markdown', eval=TRUE----------------------------------
-peake = read_csv('../data/peakquinn.csv', trim_ws=TRUE)
+peake <- read_csv('../data/peakquinn.csv', trim_ws=TRUE)
 glimpse(peake)
 
 
@@ -33,8 +38,8 @@ summary(MASS::glm.nb(INDIV ~ log(AREA), data=peake))
 ## ----fitModel1a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
 peake.rstanarm = stan_glm(INDIV ~ log(AREA), data=peake,
                           family=poisson(), 
-                         iter = 5000, warmup = 1000,
-                         chains = 3, thin = 5, refresh = 0)
+                          iter = 5000, warmup = 1000,
+                          chains = 3, thin = 5, refresh = 0)
 
 
 ## ----fitModel1b, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
@@ -50,13 +55,14 @@ peake.rstanarm1 <- update(peake.rstanarm,  prior_PD=TRUE)
 
 ## ----fitModel1g, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
 ggemmeans(peake.rstanarm1,  ~AREA) %>% plot(add.data=TRUE)
+ggemmeans(peake.rstanarm1,  ~AREA) %>% plot(add.data=TRUE) + scale_y_log10()
 
 
 ## ----fitModel1h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-peake.rstanarm2= stan_glm(INDIV ~ log(AREA), data=peake,
+peake.rstanarm2 <- stan_glm(INDIV ~ log(AREA), data=peake,
                           family=poisson(), 
-                          prior_intercept = normal(0, 5, autoscale=FALSE),
-                          prior = normal(0, 2, autoscale=FALSE),
+                          prior_intercept = normal(6, 1.5, autoscale=FALSE),
+                          prior = normal(0, 1, autoscale=FALSE),
                           prior_PD=TRUE, 
                           iter = 5000, warmup = 1000,
                           chains = 3, thin = 5, refresh = 0
@@ -66,10 +72,13 @@ peake.rstanarm2= stan_glm(INDIV ~ log(AREA), data=peake,
 ## ----fitModel1i, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
 ggemmeans(peake.rstanarm2,  ~AREA) %>%
   plot(add.data=TRUE)
+ggemmeans(peake.rstanarm2,  ~AREA) %>%
+    plot(add.data=TRUE) +
+    scale_y_log10()
 
 
 ## ----fitModel1j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-peake.rstanarm3= update(peake.rstanarm2,  prior_PD=FALSE)  
+peake.rstanarm3 <- update(peake.rstanarm2,  prior_PD=FALSE)  
 
 
 ## ----modelFit1k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
@@ -82,7 +91,7 @@ ggemmeans(peake.rstanarm3,  ~AREA) %>% plot(add.data=TRUE)
 
 
 ## ----fitModel2a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-peake.brm = brm(bf(INDIV ~ log(AREA), family=poisson()),
+peake.brm <- brm(bf(INDIV ~ log(AREA), family=poisson()),
                 data=peake,
                 iter = 5000, warmup = 1000,
                 chains = 3, thin = 5, refresh = 0)
@@ -103,7 +112,7 @@ mad(log(peake$INDIV))
 peake.brm1 = brm(bf(INDIV ~ log(AREA), family=poisson()),
                  data=peake,
                 prior=c(
-                  prior(normal(0, 2), class='b')), 
+                  prior(normal(0, 1), class='b')), 
                 sample_prior = 'only', 
                 iter = 5000, warmup = 1000,
                 chains = 3, thin = 5, refresh = 0)
@@ -111,15 +120,16 @@ peake.brm1 = brm(bf(INDIV ~ log(AREA), family=poisson()),
 
 ## ----fitModel2e, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
 ggemmeans(peake.brm1,  ~AREA) %>% plot(add.data=TRUE)
-conditional_effects(peake.brm1) %>%  plot(points=TRUE)
+ggemmeans(peake.brm1,  ~AREA) %>% plot(add.data=TRUE) + scale_y_log10()
+conditional_effects(peake.brm1) %>%  plot(points=TRUE) %>% `[[`(1) + scale_y_log10()
 
 
 ## ----fitModel2h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-peake.brm2 = brm(bf(INDIV ~ log(AREA), family=poisson()),
+peake.brm2 <- brm(bf(INDIV ~ log(AREA), family=poisson()),
                  data=peake,
                  prior=c(
-                   prior(normal(0, 5),  class='Intercept'),
-                   prior(normal(0, 2), class='b')
+                   prior(normal(6, 1.5),  class='Intercept'),
+                   prior(normal(0, 1), class='b')
                  ), 
                  sample_prior = 'only', 
                  iter = 5000, warmup = 1000,
@@ -128,25 +138,24 @@ peake.brm2 = brm(bf(INDIV ~ log(AREA), family=poisson()),
 
 ## ----fitModel2i, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
 ggemmeans(peake.brm2,  ~AREA) %>%
-  plot(add.data=TRUE)
+    plot(add.data=TRUE) +
+    scale_y_log10()
 
 
 ## ----fitModel2j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
 peake.brm3 <- update(peake.brm2,  sample_prior=TRUE, refresh=0)
 
 
+## ----fitModel2j2, results='markdown', eval=TRUE, echo = FALSE, hidden=TRUE----
+save(peake.brm3, file = '../ws/testing/peake.brm3.RData')
+
+
 ## ----fitModel2k, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
 peake.brm3 %>% get_variables()
 peake.brm3 %>%
-  posterior_samples %>%
-  select(-`lp__`) %>%
-  gather %>%
-  mutate(Type=ifelse(str_detect(key, 'prior'), 'Prior', 'b'),
-         Class=ifelse(str_detect(key, 'Intercept'),  'Intercept',
-               ifelse(str_detect(key, 'b'),  'b', NA))) %>%
-  ggplot(aes(x=Type,  y=value)) +
-  stat_pointinterval()+
-  facet_wrap(~Class,  scales='free')
+  hypothesis("logAREA=0") %>%
+  plot()
+peake.brm3 %>% SUYR_prior_and_posterior()
 
 
 ## ----fitModel2l, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
@@ -371,10 +380,10 @@ plot(peake.resids)
 
 
 ## ----fitNBModel1a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-----
-peake.rstanarm4= stan_glm(INDIV ~ log(AREA), data=peake,
+peake.rstanarm4 <- stan_glm(INDIV ~ log(AREA), data=peake,
                           family=neg_binomial_2(), 
-                          prior_intercept = normal(0, 5, autoscale=FALSE),
-                          prior = normal(0, 2, autoscale=FALSE),
+                          prior_intercept = normal(0, 1.5, autoscale=FALSE),
+                          prior = normal(0, 1, autoscale=FALSE),
                           prior_aux = rstanarm::exponential(rate=1, autoscale=FALSE), 
                           iter = 5000, warmup = 1000,
                           chains = 3, thin = 5, refresh = 0
@@ -387,7 +396,8 @@ posterior_vs_prior(peake.rstanarm4, color_by='vs', group_by=TRUE,
 
 
 ## ----fitNBModel1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-ggemmeans(peake.rstanarm4,  ~AREA) %>% plot(add.data=TRUE)
+## ggemmeans(peake.rstanarm4,  ~AREA) %>% plot(add.data=TRUE)
+ggpredict(peake.rstanarm4,  ~AREA) %>% plot(add.data=TRUE)
 
 
 ## ----fitNBModel1d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
@@ -424,9 +434,10 @@ loo_compare(peake.rstanarm3.loo, peake.rstanarm4.loo)
 peake.brm4 = brm(bf(INDIV ~ log(AREA), family=negbinomial()),
                  data=peake,
                  prior=c(
-                   prior(normal(0, 5),  class='Intercept'),
-                   prior(normal(0, 2), class='b'),
-                   prior(gamma(0.01, 0.01), class='shape')
+                   prior(normal(0, 1.5),  class='Intercept'),
+                   prior(normal(0, 1), class='b'),
+                   ## prior(gamma(0.01, 0.01), class='shape')
+                   prior(gamma(2, 1), class='shape')
                  ),
                  sample_prior=TRUE, 
                  iter = 5000, warmup = 1000,
@@ -435,20 +446,12 @@ peake.brm4 = brm(bf(INDIV ~ log(AREA), family=negbinomial()),
 
 
 ## ----fitNBModel2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-peake.brm4 %>%
-  posterior_samples %>%
-  select(-`lp__`) %>%
-  gather %>%
-  mutate(Type=ifelse(str_detect(key, 'prior'), 'Prior', 'b'),
-         Class=ifelse(str_detect(key, 'Intercept'),  'Intercept',
-               ifelse(str_detect(key, 'b'),  'b', 'shape'))) %>%
-  ggplot(aes(x=Type,  y=value)) +
-  stat_pointinterval()+
-  facet_wrap(~Class,  scales='free')
+peake.brm4 %>% SUYR_prior_and_posterior()
 
 
 ## ----fitNBModel2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-ggemmeans(peake.brm4,  ~AREA) %>% plot(add.data=TRUE)
+## ggemmeans(peake.brm4,  ~AREA) %>% plot(add.data=TRUE)
+ggpredict(peake.brm4,  ~AREA) %>% plot(add.data=TRUE)
 
 
 ## ----fitNBModel2d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
@@ -535,6 +538,32 @@ tidyMCMC(peake.rstanarm4$stanfit, estimate.method='median',  conf.int=TRUE,  con
 peake.tidy <- tidyMCMC(peake.rstanarm4$stanfit, estimate.method='median',  conf.int=TRUE,  conf.method='HPDinterval',  rhat=TRUE, ess=TRUE)
 
 
+## ----summariseModel1m, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+peake.rstanarm4$stanfit %>% as_draws_df()
+
+## summarised
+peake.rstanarm4$stanfit %>%
+    as_draws_df() %>%
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
+## summarised on fractional scale
+names <- peake.rstanarm4 %>%
+    formula() %>%
+    model.matrix(peake) %>%
+    colnames()
+
+peake.rstanarm4$stanfit %>%
+    as_draws_df() %>%
+    select(any_of(names)) %>% 
+    mutate(across(everything(), exp)) %>% 
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
+
+
 ## ----summariseModel1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 peake.rstanarm4 %>% get_variables()
 peake.draw <- peake.rstanarm4 %>% gather_draws(`.Intercept.*|.*AREA.*`,  regex=TRUE)
@@ -577,6 +606,23 @@ peake.rstanarm4 %>% tidy_draws()
 ## ----summariseModel1e, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 peake.rstanarm4 %>% spread_draws(`.Intercept.*|.*AREA.*`,  regex=TRUE)
 
+## summarised
+peake.rstanarm4 %>%
+    spread_draws(`.Intercept.*|.*AREA.*`,  regex=TRUE) %>%
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
+
+## summarised on fractional scale
+peake.rstanarm4 %>%
+    spread_draws(`.Intercept.*|.*AREA.*`,  regex=TRUE) %>%
+    mutate(across(everything(), exp)) %>% 
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
+
 
 ## ----summariseModel1f, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 peake.rstanarm4 %>% posterior_samples() %>% as_tibble()
@@ -599,6 +645,29 @@ tidyMCMC(peake.brm4$fit, estimate.method='median',  conf.int=TRUE,  conf.method=
 
 ## ----summariseModel2b1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=FALSE----
 peake.tidy <- tidyMCMC(peake.brm4$fit, estimate.method='median',  conf.int=TRUE,  conf.method='HPDinterval',  rhat=TRUE, ess=TRUE)
+
+
+## ----summariseModel2m, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+peake.brm4 %>% as_draws_df()
+## summarised 
+peake.brm4 %>%
+  as_draws_df() %>%
+  summarise_draws(
+    "median",
+    ~ HDInterval::hdi(.x),
+    "rhat",
+    "ess_bulk"
+  )
+
+## summarised on fractional scale
+peake.brm4 %>%
+    as_draws_df() %>%
+    dplyr::select(starts_with("b_")) %>% 
+    mutate(across(everything(), exp)) %>% 
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
 
 
 ## ----summariseModel2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
@@ -642,6 +711,23 @@ peake.brm4 %>% tidy_draws()
 
 ## ----summariseModel2e, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 peake.brm4 %>% spread_draws(`b_.*`,  regex=TRUE)
+## summarised
+peake.brm4 %>%
+    as_draws_df() %>%
+    dplyr::select(starts_with("b_")) %>% 
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
+## summarised on fractional scale
+peake.brm4 %>%
+    as_draws_df() %>%
+    dplyr::select(starts_with("b_")) %>% 
+    mutate(across(everything(), exp)) %>% 
+    summarise_draws("median",
+                    ~ HDInterval::hdi(.x),
+                    "rhat",
+                    "ess_bulk")
 
 
 ## ----summariseModel2f, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
@@ -660,18 +746,22 @@ peake.rstanarm4 %>% as.data.frame() %>% rename(lAREA=`log(AREA)`) %>% hypothesis
 peake.rstanarm4 %>% tidy_draws() %>% summarise(P=sum(`log(AREA)`>0)/n())
 
 
-## ----Probability1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5, echo=1:2----
+## ----Probability1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5, echo=1:5----
 newdata = list(AREA=c(5000, 10000)) 
-peake.rstanarm4 %>% emmeans(~AREA,  at=newdata) %>% pairs()
-peake.mcmc <- peake.rstanarm4 %>% emmeans(~AREA,  at=newdata) %>% pairs() %>% as.data.frame()
+## fractional scale
+peake.rstanarm4 %>% emmeans(~AREA,  at=newdata, type = 'response') %>% pairs(reverse = TRUE)
+## absolute scale
+peake.rstanarm4 %>% emmeans(~AREA,  at=newdata) %>% regrid() %>% pairs(reverse = TRUE)
+peake.mcmc <- peake.rstanarm4 %>% emmeans(~AREA,  at=newdata) %>% pairs(reverse = TRUE) %>% as.data.frame()
 
 
 ## ----Probability1d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 peake.mcmc <- peake.rstanarm4 %>% emmeans(~AREA,  at=newdata) %>% 
-  tidy_draws() %>%
-  rename_with(~str_replace(., 'AREA ', 'p')) %>%
-  mutate(Eff=p10000 - p5000,
-         PEff=100*Eff/p5000)
+    regrid() %>% 
+    tidy_draws() %>%
+    rename_with(~str_replace(., 'AREA ', 'p')) %>%
+    mutate(Eff=p10000 - p5000,
+           PEff=100*Eff/p5000)
 peake.mcmc %>% head
 
 
@@ -692,6 +782,89 @@ peake.mcmc %>% summarise(P=sum(PEff>50)/n())
 peake.mcmc %>% hypothesis('PEff>50')
 
 
+## ----Probability1i, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+## Note, the P value is on absolute difference
+newdata = list(AREA=c(5000, 10000)) 
+peake.rstanarm4 %>%
+    emmeans(~AREA,  at=newdata) %>%
+    regrid() %>%
+    pairs(reverse = TRUE) %>%
+    tidy_draws() %>%
+    summarise(across(contains('contrast'),
+                     list(P = ~ sum(.>50)/n(),
+                          HDCI = ~ median_hdci(.)),
+                     .names = c('{.fn}')
+                     )) %>%
+    tidyr::unpack(HDCI)
+
+
+## ----Probability1j, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+newdata = list(AREA=c(5000, 10000)) 
+## Simple
+peake.rstanarm4 %>%
+    emmeans(~AREA,  at=newdata) %>%
+    pairs(reverse = TRUE) %>%
+    regrid() 
+
+## More advanced (both P and percent change)
+peake.mcmc <- peake.rstanarm4 %>%
+    emmeans(~AREA,  at=newdata) %>%
+    pairs(reverse = TRUE) %>%
+    regrid() %>%
+    tidy_draws() %>%
+    mutate(across(contains('contrast'), ~ 100*(. - 1)))
+
+peake.mcmc %>%
+    summarise(across(contains('contrast'),
+                     list(P = ~ sum(.>50)/n(),
+                          HDCI = ~ median_hdci(.)),
+                     .names = c('{.fn}')
+                     )) %>%
+    tidyr::unpack(HDCI)
+
+
+
+## ----Probability1k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+peake.rstanarm4 %>%
+    linpred_draws(newdata = as.data.frame(newdata)) %>%
+    mutate(.linpred = exp(.linpred)) %>%
+    ungroup() %>%
+    group_by(.draw) %>%
+    summarise(Eff = diff(.linpred),
+              PEff = 100*Eff/.linpred[1]) %>%
+    ungroup() %>%
+    mutate(P = sum(PEff>50)/n()) %>%
+    pivot_longer(cols = -.draw) %>%
+    group_by(name) %>%
+    median_hdci()
+
+##OR
+peake.rstanarm4 %>%
+    epred_draws(newdata = as.data.frame(newdata)) %>%
+    ungroup() %>%
+    group_by(.draw) %>%
+    summarise(Eff = diff(.epred),
+              PEff = 100*Eff/.epred[1]) %>%
+    ungroup() %>%
+    mutate(P = sum(PEff>50)/n()) %>%
+    pivot_longer(cols = -.draw) %>%
+    group_by(name) %>%
+    median_hdci()
+
+##OR for prediction of individual values
+peake.rstanarm4 %>%
+    predicted_draws(newdata = as.data.frame(newdata)) %>%
+    ungroup() %>%
+    group_by(.draw) %>%
+    summarise(Eff = diff(.prediction),
+              PEff = 100*Eff/.prediction[1]) %>%
+    ungroup() %>%
+    mutate(P = sum(PEff>50)/n()) %>%
+    pivot_longer(cols = -.draw) %>%
+    group_by(name) %>%
+    median_hdci()
+
+
 ## ----Probability2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 peake.brm4 %>% hypothesis('logAREA>0')
 
@@ -700,18 +873,22 @@ peake.brm4 %>% hypothesis('logAREA>0')
 peake.brm4 %>% tidy_draws() %>% summarise(P=sum(b_logAREA>0)/n())
 
 
-## ----Probability2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5, echo=1:2----
+## ----Probability2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5, echo=1:5----
 newdata = list(AREA=c(5000, 10000)) 
-peake.brm4 %>% emmeans(~AREA,  at=newdata) %>% pairs()
-peake.mcmc <- peake.brm4 %>% emmeans(~AREA,  at=newdata) %>% pairs() %>% as.data.frame()
+## fractional scale
+peake.brm4 %>% emmeans(~AREA,  at=newdata, type = 'response') %>% pairs(reverse = TRUE)
+## absolute scale
+peake.brm4 %>% emmeans(~AREA,  at=newdata) %>% regrid() %>% pairs(reverse = TRUE)
+peake.mcmc <- peake.brm4 %>% emmeans(~AREA,  at=newdata) %>% pairs(reverse = TRUE) %>% as.data.frame()
 
 
 ## ----Probability2d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 peake.mcmc <- peake.brm4 %>% emmeans(~AREA,  at=newdata) %>% 
-  tidy_draws() %>%
-  rename_with(~str_replace(., 'AREA ', 'p')) %>%
-  mutate(Eff=p10000 - p5000,
-         PEff=100*Eff/p5000)
+    regrid() %>% 
+    tidy_draws() %>%
+    rename_with(~str_replace(., 'AREA ', 'p')) %>%
+    mutate(Eff=p10000 - p5000,
+           PEff=100*Eff/p5000)
 peake.mcmc %>% head
 
 
@@ -732,6 +909,89 @@ peake.mcmc %>% summarise(P=sum(PEff>50)/n())
 peake.mcmc %>% hypothesis('PEff>50')
 
 
+## ----Probability2i, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+## Note, the P value is on absolute difference
+newdata = list(AREA=c(5000, 10000)) 
+peake.brm4 %>%
+    emmeans(~AREA,  at=newdata) %>%
+    regrid() %>%
+    pairs(reverse = TRUE) %>%
+    tidy_draws() %>%
+    summarise(across(contains('contrast'),
+                     list(P = ~ sum(.>50)/n(),
+                          HDCI = ~ median_hdci(.)),
+                     .names = c('{.fn}')
+                     )) %>%
+    tidyr::unpack(HDCI)
+
+
+## ----Probability2j, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+newdata = list(AREA=c(5000, 10000)) 
+## Simple
+peake.brm4 %>%
+    emmeans(~AREA,  at=newdata) %>%
+    pairs(reverse = TRUE) %>%
+    regrid() 
+
+## More advanced (both P and percent change)
+peake.mcmc <- peake.brm4 %>%
+    emmeans(~AREA,  at=newdata) %>%
+    pairs(reverse = TRUE) %>%
+    regrid() %>%
+    tidy_draws() %>%
+    mutate(across(contains('contrast'), ~ 100*(. - 1)))
+
+peake.mcmc %>%
+    summarise(across(contains('contrast'),
+                     list(P = ~ sum(.>50)/n(),
+                          HDCI = ~ median_hdci(.)),
+                     .names = c('{.fn}')
+                     )) %>%
+    tidyr::unpack(HDCI)
+
+
+
+## ----Probability2k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+peake.brm4 %>%
+    linpred_draws(newdata = as.data.frame(newdata)) %>%
+    mutate(.linpred = exp(.linpred)) %>%
+    ungroup() %>%
+    group_by(.draw) %>%
+    summarise(Eff = diff(.linpred),
+              PEff = 100*Eff/.linpred[1]) %>%
+    ungroup() %>%
+    mutate(P = sum(PEff>50)/n()) %>%
+    pivot_longer(cols = -.draw) %>%
+    group_by(name) %>%
+    median_hdci()
+
+##OR
+peake.brm4 %>%
+    epred_draws(newdata = as.data.frame(newdata)) %>%
+    ungroup() %>%
+    group_by(.draw) %>%
+    summarise(Eff = diff(.epred),
+              PEff = 100*Eff/.epred[1]) %>%
+    ungroup() %>%
+    mutate(P = sum(PEff>50)/n()) %>%
+    pivot_longer(cols = -.draw) %>%
+    group_by(name) %>%
+    median_hdci()
+
+##OR for prediction of individual values
+peake.brm4 %>%
+    predicted_draws(newdata = as.data.frame(newdata)) %>%
+    ungroup() %>%
+    group_by(.draw) %>%
+    summarise(Eff = diff(.prediction),
+              PEff = 100*Eff/.prediction[1]) %>%
+    ungroup() %>%
+    mutate(P = sum(PEff>50)/n()) %>%
+    pivot_longer(cols = -.draw) %>%
+    group_by(name) %>%
+    median_hdci()
+
+
 ## ----figureModel1a, results='markdown', eval=TRUE, hidden=TRUE----------------
 ## Using emmeans
 peake.grid = with(peake, list(AREA = seq(min(AREA), max(AREA), len=100)))
@@ -740,11 +1000,23 @@ newdata = emmeans(peake.rstanarm4, ~AREA, at=peake.grid, type='response') %>% as
 head(newdata)
 
 ggplot(newdata, aes(y=prob, x=AREA)) + 
-geom_point(data=peake, aes(y=INDIV)) +
-geom_line() + 
-geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
-scale_y_continuous('Individuals') +
-scale_x_continuous('Mussel clump area') +
+    geom_point(data=peake, aes(y=INDIV)) +
+    geom_line() + 
+    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
+    scale_y_continuous('Individuals') +
+    scale_x_continuous('Mussel clump area') +
+    theme_classic()
+
+## spaghetti plot
+newdata = emmeans(peake.rstanarm4, ~AREA, at=peake.grid) %>%
+    regrid() %>% 
+    gather_emmeans_draws()
+newdata %>% head
+ggplot(newdata,  aes(y=.value,  x=AREA)) +
+    geom_line(aes(group=.draw), colour = 'orange', alpha=0.01) +
+    geom_point(data=peake,  aes(y=INDIV)) +
+    scale_y_continuous('Number of Individuals') +
+    scale_x_continuous(expression(Mussel~clump~area~(per~mm^2))) +
     theme_classic()
 
 
@@ -756,10 +1028,22 @@ newdata = emmeans(peake.brm4, ~AREA, at=peake.grid, type='response') %>% as.data
 head(newdata)
 
 ggplot(newdata, aes(y=prob, x=AREA)) + 
-geom_point(data=peake, aes(y=INDIV)) +
-geom_line() + 
-geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
-scale_y_continuous('Individuals') +
-scale_x_continuous('Mussel clump area') +
+    geom_point(data=peake, aes(y=INDIV)) +
+    geom_line() + 
+    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
+    scale_y_continuous('Individuals') +
+    scale_x_continuous('Mussel clump area') +
+    theme_classic()
+
+## spaghetti plot
+newdata = emmeans(peake.brm4, ~AREA, at=peake.grid) %>%
+    regrid() %>% 
+    gather_emmeans_draws()
+newdata %>% head
+ggplot(newdata,  aes(y=.value,  x=AREA)) +
+    geom_line(aes(group=.draw), colour = 'orange', alpha=0.01) +
+    geom_point(data=peake,  aes(y=INDIV)) +
+    scale_y_continuous('Number of Individuals') +
+    scale_x_continuous(expression(Mussel~clump~area~(per~mm^2))) +
     theme_classic()
 

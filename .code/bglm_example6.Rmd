@@ -64,6 +64,7 @@ library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
 library(tidyverse)  #for data wrangling etc
 library(patchwork)  #for multiple figures
+source('helperFunctions.R')
 ```
 
 # Scenario
@@ -160,8 +161,6 @@ quinn %>% ggplot(aes(y=RECRUITS, x=SEASON, fill=DENSITY)) + geom_boxplot()
 <div class='HIDDEN'>
 
 ## rstanarm {.tabset .tabset-pills}
-
-### Using default priors
 
 ### Using default priors
 In `rstanarm`, the default priors are designed to be weakly informative. They

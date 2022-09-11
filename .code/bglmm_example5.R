@@ -24,6 +24,8 @@ library(standist)   #for visualizing distributions
 library(rstanarm)
 library(ggeffects)
 library(DHARMa)
+library(ggridges)
+source('helperFunctions.R')
 
 
 ## ----readData, results='markdown', eval=TRUE----------------------------------
@@ -46,8 +48,7 @@ owls <- owls %>% mutate(Nest =factor(Nest),
 
 ## ----eda1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5----
 ggplot(data = owls, aes(y = NCalls, x = FoodTreatment,  color=SexParent)) +
-  geom_violin() +
-  geom_point()
+  geom_violin()
 ggplot(data = owls, aes(y = NCalls, x = FoodTreatment,  color=SexParent)) +
   geom_violin() +
   geom_point(position=position_jitterdodge(jitter.width=0.2, dodge.width=0.9))
@@ -90,11 +91,11 @@ owls.rstanP %>% prior_summary()
 
 
 ## ----fitModel1c, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
-2.5*sd(owls$NCalls)
+2.5/sd(owls$NCalls)
 
 
 ## ----fitModel1d, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
-model.matrix(~FoodTreatment*SexParent, data = owls) %>%
+model.matrix(~FoodTreatment*SexParent+offset(log(BroodSize)), data = owls) %>%
     apply(2, sd) %>%
     (function(x) 2.5/x)
 
@@ -115,8 +116,9 @@ owls.rstanarmP2 <- stan_glmer(NCalls ~ FoodTreatment*SexParent +
                                offset(log(BroodSize)) + (1|Nest),
                            data = owls,
                            family = poisson(link = 'log'),
-                           prior_intercept = normal(0, 2.5, autoscale = FALSE),
-                           prior = normal(0, 5, autoscale = FALSE),
+                           prior_intercept = normal(0, 1.5, autoscale = FALSE),
+                           prior = normal(0, c(2.2,2.2,2.5), autoscale = FALSE),
+                           prior_aux = exponential(1),
                            prior_covariance = decov(1, 1, 1, 1), 
                            refresh = 0, 
                            iter = 5000,
@@ -134,6 +136,15 @@ owls.rstanarmP2 %>%
     scale_y_continuous('', trans=scales::pseudo_log_trans())
 
 
+## ----fitModel1j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE, dependson='fitModel1h'----
+owls.rstanarmP3 <- update(owls.rstanarmP2,  prior_PD=FALSE)
+
+
+## ----modelFit1k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8----
+posterior_vs_prior(owls.rstanarmP3, color_by='vs', group_by=TRUE,
+                   facet_args=list(scales='free_y'))
+
+
 ## ----fitModel2a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE, paged.print=FALSE, tidy.opts = list(width.cutoff = 80)----
 owls.form <- bf(NCalls ~ FoodTreatment*SexParent +
                     offset(log(BroodSize)) + (1|Nest),
@@ -148,7 +159,6 @@ owls %>%
     group_by(FoodTreatment, SexParent) %>%
     summarise(log(median(NCalls)),
               log(mad(NCalls)))
-
 standist::visualize("normal(1.8,5)", xlim=c(0,20))
 standist::visualize("student_t(3, 0, 2.5)",
                     "cauchy(0,1)",
@@ -156,9 +166,11 @@ standist::visualize("student_t(3, 0, 2.5)",
 
 
 ## ----fitModel2h1, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE------
-priors <- prior(normal(1.8,5), class = 'Intercept') +
-    prior(normal(0, 2), class = 'b') +
-    prior(cauchy(0,1), class = 'sd') 
+priors <- prior(normal(0.4, 0.7), class = 'Intercept') +
+    prior(normal(0, 2.2), class = 'b', coef = 'FoodTreatmentSatiated') +
+    prior(normal(0, 2.2), class = 'b', coef = 'SexParentMale') +
+    prior(normal(0, 1), class = 'b') +
+    prior(cauchy(0,2), class = 'sd') 
 owls.form <- bf(NCalls ~ FoodTreatment*SexParent +
                     offset(log(BroodSize)) + (1|Nest),
                 family=poisson(link='log'))
@@ -170,50 +182,41 @@ owls.brm2 <- brm(owls.form,
                  warmup =2500,
                  chains = 3,
                  cores = 3,
-                 thin = 10
-                 )
-owls.brm2 <- brm(owls.form, 
-                 data = owls,
-                 prior = priors,
-                 sample_prior = 'yes',
-                 iter = 5000,
-                 warmup =2500,
-                 chains = 3,
-                 cores = 3,
                  thin = 10,
                  refresh = 0,
                  seed = 123
                  )
 
-owls.form <- bf(NCalls ~ FoodTreatment*SexParent +
-                    offset(log(BroodSize)) + (FoodTreatment*SexParent|Nest),
-                family=poisson(link='log'))
-owls.brm3 <-  brm(owls.form, 
-                  data = owls,
-                  prior = priors,
-                  sample_prior = 'yes',
-                  iter = 5000,
-                  warmup = 2500,
-                  chains = 3,
-                  cores = 3,
-                  thin = 10,
-                  refresh = 0,
-                  seed = 123, 
-                  control = list(adapt_delta=0.99)
-                  )
-
-(l.1 <- owls.brm2 %>% loo())
-(l.2 <- owls.brm3 %>% loo())
-loo_compare(l.1, l.2)
 
 
-## ----posterior2k, results='markdown', eval=TRUE-------------------------------
+## ----partialPlot2h1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+owls.brm2 %>%
+    ggpredict(~FoodTreatment*SexParent) %>%
+    plot(add.data = TRUE)
+
+
+## ----fitModel2h1b, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-----
+owls.brm3 <- update(owls.brm2,  
+                       sample_prior = 'yes',
+                       control = list(adapt_delta = 0.99),
+                       refresh = 0)
+save(owls.brm3, file = '../ws/testing/owls.brm3')
+
+
+## ----partialPlot2h1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+owls.brm3 %>%
+    ggpredict(~FoodTreatment*SexParent) %>%
+    plot(add.data = TRUE)
+
+
+## ----posterior2h2, results='markdown', eval=TRUE------------------------------
 owls.brm3 %>% get_variables()
 owls.brm3 %>% hypothesis('FoodTreatmentSatiated=0') %>% plot
 owls.brm3 %>% hypothesis('SexParentMale=0') %>% plot
 
 
-## ----posterior2k2, results='markdown', eval=TRUE, fig.width=10, fig.height=4----
+## ----posterior2h2a, results='markdown', eval=TRUE, fig.width = 7, fig.height = 5----
+owls.brm3 %>% SUYR_prior_and_posterior()
 owls.brm3 %>%
   posterior_samples %>%
   dplyr::select(-`lp__`) %>%
@@ -234,60 +237,139 @@ owls.brm3 %>%
   facet_wrap(~Class,  scales = 'free')
 
 
+## ----fitModel2h3, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE------
+priors <- prior(normal(0.4, 0.7), class = 'Intercept') +
+    prior(normal(0, 2.2), class = 'b', coef = 'FoodTreatmentSatiated') +
+    prior(normal(0, 2.2), class = 'b', coef = 'SexParentMale') +
+    prior(normal(0, 1), class = 'b') +
+    prior(cauchy(0,2), class = 'sd') +
+    prior(lkj_corr_cholesky(1), class = 'L')
+
+owls.form <- bf(NCalls ~ FoodTreatment*SexParent +
+                    offset(log(BroodSize)) +
+                    (FoodTreatment*SexParent|Nest),
+                family=poisson(link='log'))
+owls.brm4 <-  brm(owls.form, 
+                  data = owls,
+                  prior = priors,
+                  sample_prior = 'yes',
+                  iter = 5000,
+                  warmup = 2500,
+                  chains = 3,
+                  cores = 3,
+                  thin = 10,
+                  refresh = 0,
+                  seed = 123, 
+                  control = list(adapt_delta=0.99)
+                  )
+save(owls.brm4, file = '../ws/testing/owls.brm4')
+
+
+## ----posterior2k, results='markdown', eval=TRUE-------------------------------
+owls.brm4 %>% get_variables()
+owls.brm4 %>% hypothesis('FoodTreatmentSatiated=0') %>% plot
+owls.brm4 %>% hypothesis('SexParentMale=0') %>% plot
+
+
+## ----posterior2k1, results='markdown', eval=TRUE, fig.width = 7, fig.height = 5----
+owls.brm4 %>% SUYR_prior_and_posterior()
+
+
+## ----posterior2k2, results='markdown', eval=TRUE, fig.width=10, fig.height=4----
+owls.brm4 %>%
+  posterior_samples %>%
+  dplyr::select(-`lp__`) %>%
+  pivot_longer(everything(), names_to = 'key') %>% 
+  filter(!str_detect(key, '^r')) %>%
+  mutate(Type = ifelse(str_detect(key, 'prior'), 'Prior', 'Posterior'),
+         ## Class = ifelse(str_detect(key, 'Intercept'),  'Intercept',
+         ##         ifelse(str_detect(key, 'b'),  'b', 'sigma')),
+         Class = case_when(
+               str_detect(key, '(^b|^prior).*Intercept$') ~ 'Intercept',
+               str_detect(key, 'b_FoodTreatment.*|prior_b_FoodTreatment.*') &
+               !str_detect(key, '.*:.*') ~ 'FoodTreatment',
+               str_detect(key, 'b_SexParent.*|prior_b_SexParent.*') &
+               !str_detect(key, '.*\\:.*') ~ 'SexParent',
+               str_detect(key, '.*\\:.*|prior_b_.*\\:.*') ~ 'Interaction',
+               str_detect(key, 'sd') ~ 'sd',
+               str_detect(key, '^cor|prior_cor') ~ 'cor',
+             str_detect(key, 'sigma') ~ 'sigma'
+             ),
+         Par = str_replace(key, 'b_', '')) %>%
+  ggplot(aes(x = Type,  y = value, color = Par)) +
+  stat_pointinterval(position = position_dodge())+
+  facet_wrap(~Class,  scales = 'free')
+select(key, Class, Par) %>% distinct() 
+
+
+## ----fitModel2h3a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-----
+(l.1 <- owls.brm3 %>% loo())
+(l.2 <- owls.brm4 %>% loo())
+loo_compare(l.1, l.2)
+
 
 ## ----modelValidation2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
 available_mcmc()
 
 
 ## ----modelValidation2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-pars <- owls.brm3 %>% get_variables()
+pars <- owls.brm4 %>% get_variables()
 pars <- pars %>% str_extract('^b.Intercept|^b_FoodTreatment.*|^b_SexParent.*|[sS]igma|^sd.*') %>%
     na.omit()
 pars
-owls.brm3 %>% mcmc_plot(type='trace', pars = pars)
+owls.brm4 %>% mcmc_plot(type='trace', variable = pars)
+##OR
+owls.brm4 %>% mcmc_plot(type='trace',
+                        variable = '^b.Intercept|^b_FoodTreatment.*|^b_SexParent.*|[sS]igma|^sd.*',
+                        regex = TRUE)
+
 
 
 ## ----modelValidation2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-owls.brm3 %>% mcmc_plot(type='acf_bar', pars = pars)
+owls.brm4 %>% mcmc_plot(type='acf_bar', variable = pars)
+##OR
+owls.brm4 %>% mcmc_plot(type='acf_bar',
+                        variable = '^b.Intercept|^b_FoodTreatment.*|^b_SexParent.*|[sS]igma|^sd.*',
+                        regex = TRUE)
 
 
 ## ----modelValidation2d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-owls.brm3 %>% mcmc_plot(type='rhat_hist')
+owls.brm4 %>% mcmc_plot(type='rhat_hist')
 
 
 ## ----modelValidation2e, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-owls.brm3 %>% mcmc_plot(type='neff_hist')
+owls.brm4 %>% mcmc_plot(type='neff_hist')
 
 
 ## ----modelValidation2f, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-owls.brm3 %>% mcmc_plot(type='combo', pars = pars)
-owls.brm3 %>% mcmc_plot(type='violin', pars = pars)
+owls.brm4 %>% mcmc_plot(type='combo', pars = pars)
+owls.brm4 %>% mcmc_plot(type='violin', pars = pars)
 
 
 ## ----modelValidation2g, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-owls.brm3 %>% get_variables()
-pars <- owls.brm3 %>% get_variables()
+owls.brm4 %>% get_variables()
+pars <- owls.brm4 %>% get_variables()
 pars <- str_extract(pars, '^b_.*|^sigma$|^sd.*') %>% na.omit()
 
-owls.brm3$fit %>%
+owls.brm4$fit %>%
     stan_trace(pars = pars)
 
 
 ## ----modelValidation2h, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-owls.brm3$fit %>%
+owls.brm4$fit %>%
     stan_ac(pars = pars)
 
 
 ## ----modelValidation2i, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-owls.brm3$fit %>% stan_rhat() 
+owls.brm4$fit %>% stan_rhat() 
 
 
 ## ----modelValidation2j, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-owls.brm3$fit %>% stan_ess()
+owls.brm4$fit %>% stan_ess()
 
 
 ## ----modelValidation2k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-owls.brm3$fit %>%
+owls.brm4$fit %>%
     stan_dens(separate_chains = TRUE, pars = pars)
 
 
@@ -321,15 +403,15 @@ available_ppc()
 
 
 ## ----modelValidation5b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-owls.brm3 %>% pp_check(type = 'dens_overlay', nsamples = 100)
+owls.brm4 %>% pp_check(type = 'dens_overlay', ndraws = 100)
 
 
 ## ----modelValidation5c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-owls.brm3 %>% pp_check(type = 'error_scatter_avg')
+owls.brm4 %>% pp_check(type = 'error_scatter_avg')
 
 
 ## ----modelValidation5e, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-owls.brm3 %>% pp_check(group = 'Nest', type = 'intervals')
+owls.brm4 %>% pp_check(group = 'Nest', type = 'intervals')
 
 
 ## ----modelValidation5g, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
@@ -338,7 +420,7 @@ owls.brm3 %>% pp_check(group = 'Nest', type = 'intervals')
 
 
 ## ----modelValidation6a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-preds <- owls.brm3 %>% posterior_predict(nsamples = 250,  summary = FALSE)
+preds <- owls.brm4 %>% posterior_predict(nsamples = 250,  summary = FALSE)
 owls.resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = owls$NCalls,
                             fittedPredictedResponse = apply(preds, 2, median),
@@ -357,53 +439,17 @@ owls.resid1 %>% testTemporalAutocorrelation(time=unique(owls$ArrivalTime))
 
 
 ## ----fitModel3a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-priors <- prior(normal(1.8, 5), class='Intercept') +
-    prior(normal(0, 5), class='b') +
-    prior(cauchy(0,1), class='sd') +
+priors <- prior(normal(0.4,0.7), class = 'Intercept') +
+    prior(normal(0, 2.2), class = 'b', coef = 'FoodTreatmentSatiated') +
+    prior(normal(0, 2.2), class = 'b', coef = 'SexParentMale') +
+    prior(normal(0, 1), class = 'b') +
+    prior(cauchy(0,2), class = 'sd') +
+    prior(lkj_corr_cholesky(1), class = 'L') +
     prior(logistic(0,1), class='Intercept', dpar='zi') 
 owls.form <- bf(NCalls ~ FoodTreatment*SexParent +
                     offset(log(BroodSize)) +
                     (FoodTreatment*SexParent|Nest),
                 zi ~ 1,
-                family=zero_inflated_poisson(link='log'))
-
-owls.brm4 <- brm(owls.form,
-                 data=owls,
-                 prior = priors,
-                 sample_prior = 'yes',
-                 iter=5000,
-                 warmup=2500,
-                 thin=10,
-                 chains=3,
-                 refresh=0,
-                 cores=3)
-
-
-## ----fitModel3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4----
-preds <- owls.brm4 %>% posterior_predict(nsamples = 250,  summary = FALSE)
-owls.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$NCalls,
-                            fittedPredictedResponse = apply(preds, 2, median),
-                            integerResponse = TRUE)
-plot(owls.resids, quantreg = TRUE)
-
-owls.resids %>% testZeroInflation()
-owls.resids %>% testDispersion()
-owls.resids %>% testUniformity()
-owls.resids %>% testQuantiles()
-owls.resids %>% testResiduals()
-
-
-## ----fitModel4a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-priors <- prior(normal(1.8, 5), class='Intercept') +
-    prior(normal(0, 5), class='b') +
-    prior(cauchy(0,1), class='sd') +
-    prior(logistic(0,1), class='Intercept', dpar='zi') +
-    prior(normal(0,1), class='b', dpar='zi')
-owls.form <- bf(NCalls ~ FoodTreatment*SexParent +
-                    offset(log(BroodSize)) +
-                    (FoodTreatment*SexParent|Nest),
-                zi ~ FoodTreatment*SexParent,
                 family=zero_inflated_poisson(link='log'))
 
 owls.brm5 <- brm(owls.form,
@@ -415,11 +461,11 @@ owls.brm5 <- brm(owls.form,
                  thin=10,
                  chains=3,
                  refresh=0,
+                 control = list(adapt_delta = 0.99),
                  cores=3)
 
 
-
-## ----fitModel4b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4----
+## ----fitModel3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4----
 preds <- owls.brm5 %>% posterior_predict(nsamples = 250,  summary = FALSE)
 owls.resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = owls$NCalls,
@@ -434,17 +480,20 @@ owls.resids %>% testQuantiles()
 owls.resids %>% testResiduals()
 
 
-## ----fitModel6, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE--------
-priors <- prior(normal(1.8, 5), class='Intercept') +
-    prior(normal(0, 5), class='b') +
-    prior(cauchy(0,1), class='sd') +
+## ----fitModel4a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
+priors <- prior(normal(1.5,1.5), class = 'Intercept') +
+    prior(normal(0, 2.2), class = 'b', coef = 'FoodTreatmentSatiated') +
+    prior(normal(0, 2.2), class = 'b', coef = 'SexParentMale') +
+    prior(normal(0, 2.5), class = 'b') +
+    prior(cauchy(0,1), class = 'sd') +
+    prior(lkj_corr_cholesky(1), class = 'L') +
     prior(logistic(0,1), class='Intercept', dpar='zi') +
-    prior(gamma(0.01, 0.01), class='shape')
+    prior(normal(0,1), class='b', dpar='zi')
 owls.form <- bf(NCalls ~ FoodTreatment*SexParent +
                     offset(log(BroodSize)) +
                     (FoodTreatment*SexParent|Nest),
-                zi ~ 1,
-                family=zero_inflated_negbinomial(link='log'))
+                zi ~ FoodTreatment*SexParent,
+                family=zero_inflated_poisson(link='log'))
 
 owls.brm6 <- brm(owls.form,
                  data=owls,
@@ -458,8 +507,9 @@ owls.brm6 <- brm(owls.form,
                  cores=3)
 
 
-## ----fitModel6b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4----
-preds <- owls.brm6 %>% posterior_predict(nsamples = 250,  summary = FALSE)
+
+## ----fitModel4b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4----
+preds <- owls.brm6 %>% posterior_predict(ndraws = 250,  summary = FALSE)
 owls.resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = owls$NCalls,
                             fittedPredictedResponse = apply(preds, 2, median),
@@ -473,17 +523,20 @@ owls.resids %>% testQuantiles()
 owls.resids %>% testResiduals()
 
 
-## ----fitModel5, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE--------
-priors <- prior(normal(1.8, 5), class='Intercept') +
-    prior(normal(0, 5), class='b') +
-    prior(cauchy(0,1), class='sd') +
+## ----fitModel6, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE--------
+priors <- prior(normal(1.5,1.5), class = 'Intercept') +
+    prior(normal(0, 2.2), class = 'b', coef = 'FoodTreatmentSatiated') +
+    prior(normal(0, 2.2), class = 'b', coef = 'SexParentMale') +
+    prior(normal(0, 2.5), class = 'b') +
+    prior(cauchy(0,1), class = 'sd') +
+    prior(lkj_corr_cholesky(1), class = 'L') +
     prior(logistic(0,1), class='Intercept', dpar='zi') +
-    prior(normal(0,1), class='b', dpar='zi') +
+    ## prior(normal(0,1), class='b', dpar='zi') +
     prior(gamma(0.01, 0.01), class='shape')
 owls.form <- bf(NCalls ~ FoodTreatment*SexParent +
                     offset(log(BroodSize)) +
                     (FoodTreatment*SexParent|Nest),
-                zi ~ FoodTreatment*SexParent,
+                zi ~ 1,
                 family=zero_inflated_negbinomial(link='log'))
 
 owls.brm7 <- brm(owls.form,
@@ -498,8 +551,52 @@ owls.brm7 <- brm(owls.form,
                  cores=3)
 
 
+## ----fitModel6b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4----
+preds <- owls.brm7 %>% posterior_predict(ndraws = 250,  summary = FALSE)
+owls.resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = owls$NCalls,
+                            fittedPredictedResponse = apply(preds, 2, median),
+                            integerResponse = TRUE)
+plot(owls.resids, quantreg = TRUE)
+
+owls.resids %>% testZeroInflation()
+owls.resids %>% testDispersion()
+owls.resids %>% testUniformity()
+owls.resids %>% testQuantiles()
+owls.resids %>% testResiduals()
+
+
+## ----fitModel5, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE--------
+priors <- prior(normal(0.4, 0.7), class = 'Intercept') +
+    prior(normal(0, 2.2), class = 'b', coef = 'FoodTreatmentSatiated') +
+    prior(normal(0, 2.2), class = 'b', coef = 'SexParentMale') +
+    prior(normal(0, 1), class = 'b') +
+    prior(cauchy(0,2), class = 'sd') +
+    prior(lkj_corr_cholesky(1), class = 'L') +
+    prior(logistic(0,1), class='Intercept', dpar='zi') +
+    prior(normal(0,1), class='b', dpar='zi') +
+    prior(gamma(0.01, 0.01), class='shape')
+owls.form <- bf(NCalls ~ FoodTreatment*SexParent +
+                    offset(log(BroodSize)) +
+                    (FoodTreatment*SexParent|Nest),
+                zi ~ FoodTreatment*SexParent,
+                family=zero_inflated_negbinomial(link='log'))
+
+owls.brm8 <- brm(owls.form,
+                 data=owls,
+                 prior = priors,
+                 sample_prior = 'yes',
+                 iter=5000,
+                 warmup=2500,
+                 thin=10,
+                 chains=3,
+                 refresh=0,
+                 control = list(adapt_delta = 0.99),
+                 cores=3)
+
+
 ## ----fitModel5b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4----
-preds <- owls.brm7 %>% posterior_predict(nsamples = 250,  summary = FALSE)
+preds <- owls.brm8 %>% posterior_predict(nsamples = 250,  summary = FALSE)
 owls.resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = owls$NCalls,
                             fittedPredictedResponse = apply(preds, 2, median),
@@ -514,80 +611,100 @@ owls.resids %>% testResiduals()
 
 
 ## ----fitModel7a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=4----
-(l.1 <- loo(owls.brm3))
-(l.2 <- loo(owls.brm4))
-(l.3 <- loo(owls.brm5))
-(l.4 <- loo(owls.brm6))
-(l.5 <- loo(owls.brm7))
+(l.1 <- loo(owls.brm4))
+(l.2 <- loo(owls.brm5))
+(l.3 <- loo(owls.brm6))
+(l.4 <- loo(owls.brm7))
+(l.5 <- loo(owls.brm8))
 loo_compare(l.1, l.2, l.3, l.4, l.5)
 
 
 ## ----partialPlot2d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-owls.brm7 %>%
+owls.brm8 %>%
     conditional_effects("FoodTreatment:SexParent") %>%
-    plot(points = TRUE, jitter = c(0.25,0))
+    ## plot(points = TRUE, point.args = list(width=0.25))
+    ## plot(points = TRUE, jitter_width = c(0.25,0))
+    plot(points = TRUE, jitter_width = 0.25)
 
 
 ## ----partialPlot2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-owls.brm7 %>%
+owls.brm8 %>%
     ggpredict(~FoodTreatment*SexParent) %>%
     plot(add.data = TRUE, jitter = c(0.25, 0))
 
 
 ## ----partialPlot2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-off <- owls %>% summarize(Mean=mean(BroodSize))
-as.numeric(off)
-owls.brm7 %>%
-    ggemmeans(~FoodTreatment*SexParent, offset=off$Mean) %>%
-    plot() 
-owls.brm7 %>%
-    ggemmeans(~FoodTreatment*SexParent, offset=log(off$Mean)) %>%
-    plot() 
-owls.brm7 %>%
+## off <- owls %>% summarize(Mean=mean(BroodSize))
+## as.numeric(off)
+## owls.brm7 %>%
+##     ggemmeans(~FoodTreatment*SexParent, offset=off$Mean) %>%
+##     plot() 
+## owls.brm7 %>%
+##     ggemmeans(~FoodTreatment*SexParent, offset=log(off$Mean)) %>%
+##     plot() 
+owls.brm8 %>%
     ggemmeans(~FoodTreatment*SexParent, offset=log(1)) %>%
     plot() 
 
 
 ## ----summariseModel2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-owls.brm7 %>% summary()
+owls.brm8 %>% summary()
 
 
 ## ----summariseModel2a1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5, echo=FALSE----
-owls.sum <- summary(owls.brm7)
+owls.sum <- summary(owls.brm8)
+
+
+## ----summariseModel2bm, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=FALSE----
+owls.brm8 %>% as_draws_df()
+owls.brm8 %>%
+  as_draws_df() %>%
+  summarise_draws(
+    "median",
+    ~ HDInterval::hdi(.x),
+    "rhat",
+    "ess_bulk"
+  )
 
 
 ## ----summariseModel2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-owls.brm7$fit %>%
+owls.brm8$fit %>%
     tidyMCMC(estimate.method = 'median',
              conf.int = TRUE,  conf.method = 'HPDinterval',
              rhat = TRUE, ess = TRUE)
 
 ## ----summariseModel2b1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=FALSE----
-owls.tidy <- tidyMCMC(owls.brm7$fit, estimate.method='median',
+owls.tidy <- tidyMCMC(owls.brm8$fit, estimate.method='median',
                          conf.int=TRUE,  conf.method='HPDinterval',
                          rhat=TRUE, ess=TRUE)
 
 
 ## ----summariseModel2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-owls.brm7 %>% get_variables()
-owls.draw <- owls.brm7 %>%
+owls.brm8 %>% get_variables()
+owls.draw <- owls.brm8 %>%
     gather_draws(`b.Intercept.*|b_FoodTreatment.*|b_SexParent.*`,  regex=TRUE)
 owls.draw
 
 
 ## ----summariseModel2c1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 owls.draw %>% median_hdci
+## On a fractional scale
+owls.draw %>% 
+    mutate(.value = exp(.value)) %>%
+    median_hdci
 
 
 ## ----summariseModel2c3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=FALSE----
-owls.gather <- owls.brm7 %>%
+owls.gather <- owls.brm8 %>%
     gather_draws(`b_Intercept.*|b_FoodTreatment.*|b_SexParent.*`,  regex=TRUE) %>%
+    mutate(.value = exp(.value)) %>%
     median_hdci
 
 
 ## ----summariseModel2c4, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
-owls.brm7 %>%
+owls.brm8 %>%
     gather_draws(`b_Intercept.*|b_FoodTreatment.*|b_SexParent.*`, regex=TRUE) %>% 
+    ## mutate(.value = exp(.value)) %>%
     ggplot() +
     geom_vline(xintercept=0, linetype='dashed') +
     stat_slab(aes(x = .value, y = .variable,
@@ -597,7 +714,7 @@ owls.brm7 %>%
                               )), color='black') + 
     scale_fill_brewer('Interval', direction = -1, na.translate = FALSE) 
 
-owls.brm7 %>% 
+owls.brm8 %>% 
     gather_draws(`.Intercept.*|b_FoodTreatment.*|b_SexParent.*`, regex=TRUE) %>% 
     ggplot() + 
     geom_vline(xintercept = 0, linetype='dashed') +
@@ -606,41 +723,100 @@ owls.brm7 %>%
 
 
 ## ----summariseModel2j, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-owls.brm7$fit %>% plot(type='intervals') 
+owls.brm8$fit %>% plot(type='intervals') 
+
+
+## ----summariseModel2ka, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
+owls.brm8 %>% 
+    gather_draws(`^b_.*`, regex=TRUE) %>% 
+    filter(.variable != 'b_Intercept') %>%
+    ggplot() + 
+    stat_halfeye(aes(x=.value,  y=.variable)) +
+    facet_wrap(~.variable, scales='free') +
+    theme(axis.text.y = element_blank())
+
+owls.brm8 %>% 
+    gather_draws(`^b_.*`, regex=TRUE) %>% 
+    filter(.variable != 'b_Intercept') %>%
+    ggplot() + 
+    stat_halfeye(aes(x=.value,  y=.variable)) +
+    geom_vline(xintercept = 0, linetype = 'dashed')
+
+
+## ----summariseModel2c7, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
+owls.brm8 %>% 
+    gather_draws(`^b_.*`, regex=TRUE) %>% 
+    filter(str_detect(.variable, 'b_.*Intercept', negate = TRUE)) %>%
+    ggplot() +  
+    geom_density_ridges(aes(x=.value, y = .variable), alpha=0.4) +
+    geom_vline(xintercept = 0, linetype = 'dashed')
+##Or in colour
+owls.brm8 %>% 
+    gather_draws(`^b_.*`, regex=TRUE) %>% 
+    filter(str_detect(.variable, 'b_.*Intercept', negate = TRUE)) %>%
+    ggplot() + 
+    geom_density_ridges_gradient(aes(x=(.value),
+                                     y = .variable,
+                                     fill = stat(x)),
+                                 alpha=0.4, colour = 'white',
+                                 quantile_lines = TRUE,
+                                 quantiles = c(0.025, 0.975)) +
+    geom_vline(xintercept = 1, linetype = 'dashed') +
+    scale_x_continuous() +
+    scale_fill_viridis_c(option = "C") 
+
+## Fractional scale
+owls.brm8 %>% 
+    gather_draws(`^b_.*`, regex=TRUE) %>% 
+    filter(str_detect(.variable, 'b_.*Intercept', negate = TRUE)) %>%
+    ggplot() + 
+    geom_density_ridges_gradient(aes(x=exp(.value),
+                                     y = .variable,
+                                     fill = stat(x)),
+                                 alpha=0.4, colour = 'white',
+                                 quantile_lines = TRUE,
+                                 quantiles = c(0.025, 0.975)) +
+    geom_vline(xintercept = 1, linetype = 'dashed') +
+    scale_x_continuous(trans = scales::log2_trans()) +
+    scale_fill_viridis_c(option = "C") 
 
 
 ## ----summariseModel2d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-owls.brm7 %>% tidy_draws()
+owls.brm8 %>% tidy_draws()
 
 
 ## ----summariseModel2e, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-owls.brm7 %>% spread_draws(`.*Intercept.*|b_FoodTreatment.*|b_SexParent.*`,  regex=TRUE)
+owls.brm8 %>% spread_draws(`.*Intercept.*|b_FoodTreatment.*|b_SexParent.*`,  regex=TRUE)
 
 
 ## ----summariseModel2f, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-owls.brm7 %>% posterior_samples() %>% as_tibble()
+owls.brm8 %>% posterior_samples() %>% as_tibble()
 
 
 ## ----summariseModel2g, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-owls.brm7 %>%
+owls.brm8 %>%
     bayes_R2(re.form = NA, summary=FALSE) %>%
     median_hdci
-owls.brm7 %>%
+owls.brm8 %>%
     bayes_R2(re.form = ~(1|Nest), summary=FALSE) %>%
     median_hdci
-owls.brm7 %>%
+owls.brm8 %>%
     bayes_R2(re.form = ~(FoodTreatment*SexParent|Nest), summary=FALSE) %>%
     median_hdci
 
 
 ## ----postHoc1a, results='markdown', eval=TRUE, echo=1,hidden=TRUE-------------
-owls.brm7 %>%
-    emmeans(~FoodTreatment, type='response') 
-owls.brm7 %>%
-    emmeans(~FoodTreatment, offset=0, type='response') 
-
-newdata <- owls.brm7 %>%
+## The following should work, but there is a bug and therefore it does not
+## (although it has been reported - so may get fixed at some point).
+## The offset seems to get handled incorrectly
+newdata <- owls.brm8 %>%
     emmeans(~FoodTreatment|SexParent, offset=0, type='response') %>%
+    as.data.frame
+head(newdata)
+## As an alternative, we can do the following...
+newdata <- owls.brm8 %>%
+    emmeans(~FoodTreatment|SexParent,
+          at = list(BroodSize = 1), type='response') %>%
     as.data.frame
 head(newdata)
 ggplot(newdata) +

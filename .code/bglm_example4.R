@@ -20,6 +20,7 @@ library(ggeffects)  #for partial effects plots
 library(tidyverse)  #for data wrangling etc
 library(patchwork)  #for multiple plots
 library(ggridges)   #for ridge plots 
+source("helperFunctions.R")
 
 
 ## ----readData, results='markdown', eval=TRUE----------------------------------
@@ -81,8 +82,8 @@ loyn.rstanarm2 <- stan_glm(ABUND ~ scale(log(DIST))+
                               scale(ALT)+
                               scale(YR.ISOL), data=loyn,
                           family=gaussian(link='log'),
-                          prior_intercept = normal(3, 10,  autoscale=FALSE),
-                          prior = normal(0, 2.5, autoscale=FALSE),
+                          prior_intercept = normal(3, 1,  autoscale=FALSE),
+                          prior = normal(0, 1, autoscale=FALSE),
                           prior_aux = cauchy(0, 5),
                           prior_PD=TRUE, 
                           iter = 5000, thin=5,chains = 3, warmup=2000, 
@@ -92,6 +93,7 @@ loyn.rstanarm2 <- stan_glm(ABUND ~ scale(log(DIST))+
 ## ----fitModel1i, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
 ggemmeans(loyn.rstanarm2,  ~AREA) %>%
   plot(add.data=TRUE) + scale_y_log10()
+loyn.rstanarm2 %>% ggpredict() %>% plot(add.data=TRUE, facet=TRUE) + scale_y_log10() 
 
 
 ## ----fitModel1j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE, dependson='fitModel1h'----
@@ -105,6 +107,9 @@ posterior_vs_prior(loyn.rstanarm3, color_by='vs', group_by=TRUE,
 
 ## ----modelFit1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
 #ggemmeans(loyn.rstanarm3,  ~AREA) %>% plot(add.data=TRUE) + scale_y_log10()
+ggpredict(loyn.rstanarm3,  ~AREA) %>%
+  plot(add.data=TRUE) + scale_y_log10()
+loyn.rstanarm3 %>% ggpredict() %>% plot(add.data=TRUE, facet=TRUE) 
 
 
 ## ----fitModel2a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
@@ -166,9 +171,11 @@ loyn.brm1 %>%
     lapply(function(x) x + scale_y_log10()) %>%
     wrap_plots()
 
+loyn.brm1 %>% ggpredict() %>% plot(add.data=TRUE, facet=TRUE) + scale_y_log10() 
+
 
 ## ----fitModel2h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-priors <- prior(normal(0, 10),  class = 'Intercept') +
+priors <- prior(normal(3, 1),  class = 'Intercept') +
     prior(normal(0, 1), class = 'b') +
     prior(gamma(2, 1), class = 'sigma')
  
@@ -200,9 +207,15 @@ loyn.brm2 %>%
     lapply(function(x) x + scale_y_log10()) %>%
     wrap_plots()
 
+loyn.brm2 %>% ggpredict() %>% plot(add.data=TRUE, facet=TRUE) + scale_y_log10() 
+
 
 ## ----fitModel2j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
 loyn.brm3 <- update(loyn.brm2,  sample_prior = 'yes', refresh = 0)
+
+
+## ----fitModel2j2, results='markdown', eval=TRUE, echo = FALSE, hidden=TRUE----
+save(loyn.brm3, file = '../ws/testing/loyn.brm3.RData')
 
 
 ## ----fitModel2k, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
@@ -212,19 +225,7 @@ loyn.brm3 %>% hypothesis('Intercept = 0', class = 'prior') %>% plot
 loyn.brm3 %>% hypothesis('scalelogAREA = 0') %>% plot
 loyn.brm3 %>% hypothesis('sigma = 0', class = '') %>% plot
 
-
-## ----fitModel2m, results='markdown', fig.width = 7, fig.height = 3, eval=TRUE, hidden=TRUE, cache=FALSE----
-loyn.brm3 %>%
-  as_draws_df() %>%
-  select(-`lp__`, -.chain, -.iteration, -.draw) %>%
-  pivot_longer(everything(), names_to = 'key') %>%
-  mutate(Type = ifelse(str_detect(key, 'prior'), 'Prior', 'b'),
-         Class = ifelse(str_detect(key, 'Intercept'),  'Intercept',
-               ifelse(str_detect(key, 'b'),  'b', 'sigma')),
-         Par = str_replace(key, 'b_', '')) %>%
-  ggplot(aes(x = Type,  y = value, color = Par)) +
-  stat_pointinterval(position = position_dodge())+
-  facet_wrap(~Class,  scales = 'free')
+loyn.brm3 %>% SUYR_prior_and_posterior()
 
 
 ## ----fitModel2l, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
@@ -277,12 +278,12 @@ stan_ess(loyn.rstanarm3)
 stan_dens(loyn.rstanarm3, separate_chains = TRUE)
 
 
-## ----modelValidation1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
+## ----modelValidation1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=12----
 loyn.ggs <- ggs(loyn.rstanarm3)
 ggs_traceplot(loyn.ggs)
 
 
-## ----modelValidation1m, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
+## ----modelValidation1m, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=12----
 ggs_autocorrelation(loyn.ggs)
 
 
@@ -347,12 +348,12 @@ loyn.brm3$fit %>% stan_ess()
 loyn.brm3$fit %>% stan_dens(separate_chains = TRUE)
 
 
-## ----modelValidation2l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
+## ----modelValidation2l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=12----
 loyn.ggs <- loyn.brm3 %>% ggs(inc_warmup = FALSE, burnin = FALSE)
 loyn.ggs %>% ggs_traceplot()
 
 
-## ----modelValidation2m, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
+## ----modelValidation2m, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=12----
 loyn.ggs %>% ggs_autocorrelation()
 
 
@@ -794,9 +795,9 @@ bayes_factor(loyn.brm4e,
              loyn.brm4d)
 
 
-## ----furtherModel2c, results='markdown', cache=TRUE, eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
+## ----furtherModel2c, results='markdown', cache=FALSE, eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
 loyn.list <- with(loyn, list(AREA = c(min(AREA), mean(AREA), max(AREA))))
-
+ 
 newdata <- loyn.brm4b %>%
     emmeans(~fGRAZE|AREA, at = loyn.list, type = 'response') %>%
     pairs() %>%
@@ -868,6 +869,23 @@ ggplot(newdata) +
   theme_bw() +
   scale_x_log10() + scale_y_log10()
 
+## or honouring the data range
+loyn.nd <- loyn %>%
+    group_by(fGRAZE) %>%
+    expand(AREA = modelr::seq_range(AREA, n=100),
+           DIST = mean(DIST), LDIST = mean(LDIST), ALT = mean(ALT), YR.ISOL = mean(YR.ISOL))
+loyn.rstanarm3 %>%
+    epred_draws(newdata = loyn.nd, value = '.value') %>%
+    median_hdci() %>%
+    ggplot(aes(x = AREA, y = .value, colour = fGRAZE, fill = fGRAZE)) +
+    geom_ribbon(aes(ymin = .lower, ymax = .upper), colour = NA, alpha = 0.3) +
+    geom_line() +
+    geom_point(data = loyn, aes(y = ABUND, x = AREA)) +
+    scale_y_log10() +
+    scale_x_log10() +
+    theme_bw()
+
+
 
 ## ----summaryFigure1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5, echo=TRUE----
 loyn.list = with(loyn, list(AREA = seq(min(AREA), max(AREA), len=100)))
@@ -893,6 +911,21 @@ ggplot(newdata) +
   geom_line(aes(y=response, x=AREA, color=fGRAZE)) +
   theme_bw() +
   scale_x_log10() + scale_y_log10()
+
+## or honouring the data range
+loyn.nd <- loyn %>%
+    group_by(fGRAZE) %>%
+    expand(AREA = modelr::seq_range(AREA, n=100))
+loyn.rstanarm4b %>%
+    epred_draws(newdata = loyn.nd, value = '.value') %>%
+    median_hdci() %>%
+    ggplot(aes(x = AREA, y = .value, colour = fGRAZE, fill = fGRAZE)) +
+    geom_ribbon(aes(ymin = .lower, ymax = .upper), colour = NA, alpha = 0.3) +
+    geom_line() +
+    geom_point(data = loyn, aes(y = ABUND, x = AREA)) +
+    scale_y_log10() +
+    scale_x_log10() +
+    theme_bw()
 
 
 ## ----summaryFigure2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5, echo=TRUE----
@@ -920,6 +953,23 @@ ggplot(newdata) +
   theme_bw() +
   scale_x_log10() + scale_y_log10()
 
+# or honouring the data range
+loyn.nd <- loyn %>%
+    group_by(fGRAZE) %>%
+    expand(AREA = modelr::seq_range(AREA, n=100),
+           DIST = mean(DIST), LDIST = mean(LDIST), ALT = mean(ALT), YR.ISOL = mean(YR.ISOL))
+loyn.brm3 %>%
+    epred_draws(newdata = loyn.nd, value = '.value') %>%
+    median_hdci() %>%
+    ggplot(aes(x = AREA, y = .value, colour = fGRAZE, fill = fGRAZE)) +
+    geom_ribbon(aes(ymin = .lower, ymax = .upper), colour = NA, alpha = 0.3) +
+    geom_line() +
+    geom_point(data = loyn, aes(y = ABUND, x = AREA)) +
+    scale_y_log10() +
+    scale_x_log10() +
+    theme_bw()
+
+
 
 ## ----summaryFigure2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5, echo=TRUE----
 loyn.list <- with(loyn, list(AREA = modelr::seq_range(AREA, n = 100)))
@@ -945,4 +995,19 @@ ggplot(newdata) +
   geom_line(aes(y = response, x = AREA, color = fGRAZE)) +
   theme_bw() +
   scale_x_log10() + scale_y_log10()
+
+## or honouring the data range
+loyn.nd <- loyn %>%
+    group_by(fGRAZE) %>%
+    expand(AREA = modelr::seq_range(AREA, n=100))
+loyn.brm4b %>%
+    epred_draws(newdata = loyn.nd, value = '.value') %>%
+    median_hdci() %>%
+    ggplot(aes(x = AREA, y = .value, colour = fGRAZE, fill = fGRAZE)) +
+    geom_ribbon(aes(ymin = .lower, ymax = .upper), colour = NA, alpha = 0.3) +
+    geom_line() +
+    geom_point(data = loyn, aes(y = ABUND, x = AREA)) +
+    scale_y_log10() +
+    scale_x_log10() +
+    theme_bw()
 
