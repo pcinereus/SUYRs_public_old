@@ -91,6 +91,19 @@ glimpse(hughes)
 
 # Exploratory Data Analysis
 
+Proportional (cumulative link) odds-ratio models are useful when the latent
+(unmeasured) response is recorded on a ordinal (ordered categorical) scale.
+When this is the case, we can calculate the probability of a that an observed
+ordinal score ($y$) is less than or equal to any given level ($i$: category) given a set of
+covariates ($\boldsymbol{X}$) according to the following:
+
+$$ Pr(y\le i|\boldsymbol{X}) =
+\frac{1}{1+e^{-(\theta_i - \boldsymbol{\beta}.\boldsymbol{X})}}\\ $$
+
+where $y$ is the observed categorical response, $\boldsymbol{X}$ is a ($n \times
+p$) effects model matrix, $\boldsymbol{\beta}$ are the $p$ effects parameters
+and $\theta_i$ are the $K-1$ category thresholds
+
 
 # Fit models
 
