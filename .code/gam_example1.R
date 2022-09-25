@@ -95,6 +95,11 @@ performance::check_distribution(data_gam.gam)
 
 ## ----modelValidationGAM1f, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE, warning=FALSE, message=FALSE, cache=FALSE----
 resids <- DHARMa::simulateResiduals(data_gam.gam,  plot=TRUE)
+##OR in this case, it would be better to plot separately
+##since there are not enough observations for the quantile regressions
+##and it struggles and tries for a while
+resids <- DHARMa::simulateResiduals(data_gam.gam)
+plot(resids, quantreg = FALSE)
 
 
 ## ----modelValidationGAM2, results='markdown', eval=TRUE, fig.width=7, fig.height=7, hidden=TRUE, cache=TRUE----
