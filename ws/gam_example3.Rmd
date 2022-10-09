@@ -61,6 +61,7 @@ library(DHARMa)    #for residuals diagnostics
 library(performance) #for residual disagnostics
 library(see)        # to visualize residual diagnostics
 library(patchwork)  #for grids of plots
+library(gamm4)
 ```
  
 # Scenario
@@ -81,7 +82,7 @@ they are mainly one dimensional).
 
 Format of aims.wq.csv data file
 
-LATITUDE LONGITUDE reef.alias Water_Samples Region Subregion Season waterYear NOx
+LATITUDE LONGITUDE reef.alias Water_Samples Region Subregion Season waterYear DOC
 -------- --------- ---------- ------------- ------ --------- ------ --------- ---
 -16.1    145.      Cape Trib… AIMS          Wet T… Barron D… Dry    2008      0.830
 -16.1    145.      Cape Trib… AIMS          Wet T… Barron D… Wet    2008      0.100
@@ -101,13 +102,14 @@ LATITUDE LONGITUDE reef.alias Water_Samples Region Subregion Season waterYear NO
 **Season**         - A categorical listing of Wet or Dry
 **waterYear**      - The water year (1st Oct - 30 Sept) to which the data are attached
 **Date**           - The date the sample was collected
-**NOx**            - Nitrite and Nitrate
+**Mnth**           - The month the sample was collected
+**DOC**            - Nitrite and Nitrate
 --------------     ---------------------------------------------------------------------
 
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-wq = read_csv('../data/aims.wq.csv', trim_ws=TRUE)
+wq = read_csv('../data/aims.wq1.csv', trim_ws=TRUE)
 glimpse(wq)
 ```
 
@@ -135,6 +137,7 @@ where $\beta_0$ is the y-intercept. $f(Date)$ and $f(Month)$ indicate the additi
 
 # Mixed model (all reefs) {.tabset .tabset-faded}
 
+here
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
 

@@ -50,7 +50,9 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FAL
 Load the necessary libraries
 
 ```{r libraries, results='markdown', eval=TRUE}
+library(tidyverse)  #for data wrangling etc
 library(rstanarm)   #for fitting models in STAN
+library(cmdstanr)   #for cmdstan
 library(brms)       #for fitting models in STAN
 library(coda)       #for diagnostics
 library(bayesplot)  #for diagnostics
@@ -61,9 +63,10 @@ library(emmeans)    #for marginal means etc
 library(broom)      #for tidying outputs
 library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
-library(tidyverse)  #for data wrangling etc
 library(broom.mixed)#for summarising models
 library(ggeffects)  #for partial effects plots
+library(bayestestR) #for ROPE
+library(see)        #for some plots
 theme_set(theme_grey()) #put the default ggplot theme back
 source("helperFunctions.R")
 ```

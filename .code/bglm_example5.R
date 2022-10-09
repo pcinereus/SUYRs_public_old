@@ -3,8 +3,13 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FAL
 
 
 ## ----libraries, results='markdown', eval=TRUE---------------------------------
+library(tidyverse)  #for data wrangling etc
 library(rstanarm)   #for fitting models in STAN
+library(cmdstanr)   #for cmdstan
 library(brms)       #for fitting models in STAN
+library(standist)   #for exploring distributions
+library(HDInterval) #for HPD intervals
+library(posterior)  #for posterior draws
 library(coda)       #for diagnostics
 library(ggmcmc)     #for MCMC diagnostics
 library(bayesplot)  #for diagnostics
@@ -12,12 +17,14 @@ library(rstan)      #for interfacing with STAN
 library(DHARMa)     #for residual diagnostics
 library(emmeans)    #for marginal means etc
 library(broom)      #for tidying outputs
-library(broom.mixed)
+library(broom.mixed)#for summarising models
 library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
 library(tidyverse)  #for data wrangling etc
-library(patchwork)
+library(patchwork)  #for multi-panel figures
 library(ggridges)   #for ridge plots
+library(bayestestR) #for ROPE
+library(see)        #for some plots
 source('helperFunctions.R')
 
 
@@ -59,24 +66,40 @@ day.rstanarm1 <- update(day.rstanarm,  prior_PD=TRUE)
 
 
 ## ----fitModel1g, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
-ggpredict(day.rstanarm1) %>% plot(add.data=TRUE)
+day.rstanarm1 %>%
+    ggpredict() %>%
+    plot(add.data = TRUE)
+
+ggpredict(day.rstanarm1) %>%
+    plot(add.data=TRUE) %>%
+    wrap_plots() &
+    scale_y_log10()
 
 
 ## ---- echo = FALSE, eval = FALSE----------------------------------------------
 ## day %>%
 ##     group_by(TREAT) %>%
-##     summarise(BARNACLE = sample(log(BARNACLE), 1000, replace = TRUE),
-##               R = 1:1000) %>%
-##     ungroup() %>%
-##     group_by(R) %>%
-##     summarise(D = diff(BARNACLE), Comp = 1:3) %>%
-##     ungroup() %>%
-##     group_by(Comp) %>%
-##     summarise(sd(D))
+##     summarise(mean(log(BARNACLE)),
+##               sd(log(BARNACLE)))
+## 
+## model.matrix(~TREAT, data = day)
+## apply(model.matrix(~TREAT, data = day), 2, sd)
+## sd(log(day$BARNACLE))/apply(model.matrix(~TREAT, data = day), 2, sd)
+## 
+## ## day %>%
+## ##     group_by(TREAT) %>%
+## ##     summarise(BARNACLE = sample(log(BARNACLE), 1000, replace = TRUE),
+## ##               R = 1:1000) %>%
+## ##     ungroup() %>%
+## ##     group_by(R) %>%
+## ##     summarise(D = diff(BARNACLE), Comp = 1:3) %>%
+## ##     ungroup() %>%
+## ##     group_by(Comp) %>%
+## ##     summarise(sd(D))
 
 
 ## ----fitModel1h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-day.rstanarm2= stan_glm(BARNACLE ~ TREAT, data=day,
+day.rstanarm2 <- stan_glm(BARNACLE ~ TREAT, data=day,
                         family=poisson(link='log'), 
                          prior_intercept = normal(3, 1, autoscale=FALSE),
                          prior = normal(0, 1, autoscale=FALSE),
@@ -88,7 +111,7 @@ day.rstanarm2= stan_glm(BARNACLE ~ TREAT, data=day,
 
 ## ----fitModel1i, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
 ggpredict(day.rstanarm2) %>%
-  plot(add.data=TRUE)
+  plot(add.data=TRUE, log.y = TRUE)
 
 
 ## ----fitModel1j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
@@ -105,14 +128,16 @@ ggpredict(day.rstanarm3) %>% plot(add.data=TRUE)
 
 
 ## ----fitModel2a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-day.brm <- brm(bf(BARNACLE ~ TREAT,
-                  family = poisson(link = 'log')), 
+day.form <- bf(BARNACLE ~ TREAT,
+               family = poisson(link = 'log'))
+day.brm <- brm(day.form, 
                data = day,
                iter = 5000,
-               warmup = 1000,
-               chains = 3,
+               warmup = 2500,
+               chains = 3, cores = 3,
                thin = 5,
-               refresh = 0)
+               refresh = 0,
+               backend = "cmdstan")
 
 
 ## ----fitModel2b, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE, paged.print=FALSE,tidy.opts = list(width.cutoff = 80), echo=2----
@@ -122,71 +147,119 @@ options(width=80)
 
 
 ## ----fitModel2d, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
+model.matrix(~TREAT, data = day)
+apply(model.matrix(~TREAT, data = day), 2, sd)
+sd(log(day$BARNACLE))/apply(model.matrix(~TREAT, data = day), 2, sd)
+
 priors <- prior(normal(0, 1),  class = 'b')
-day.brm1 <- brm(bf(BARNACLE ~ TREAT,
-                  family = poisson(link = 'log')), 
+day.brm1 <- brm(day.form,
                data = day,
                prior = priors, 
                sample_prior = 'only', 
                iter = 5000,
-               warmup = 1000,
-               chains = 3,
+               warmup = 2500,
+               chains = 3, cores = 3,
                thin = 5,
-               refresh = 0)
+               refresh = 0,
+               backend = "cmdstan")
 
 
 ## ----fitModel2e, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
 day.brm1 %>% ggpredict() %>% plot(add.data=TRUE)
-day.brm1 %>% ggpredict() %>% plot(add.data=TRUE) %>% `[[`(1) + scale_y_log10()
+day.brm1 %>%
+    ggpredict() %>%
+    plot(add.data=TRUE) %>%
+    wrap_plots() &
+    scale_y_log10()
+## day.brm1 %>% ggpredict() %>% plot(add.data=TRUE) %>% `[[`(1) + scale_y_log10()
 
-day.brm1 %>% ggemmeans(~TREAT) %>% plot(add.data=TRUE)
-day.brm1 %>% ggemmeans(~TREAT) %>% plot(add.data=TRUE) + scale_y_log10()
 
-day.brm1 %>% conditional_effects() %>%  plot(points=TRUE)
-day.brm1 %>% conditional_effects() %>%  plot(points=TRUE) %>% `[[`(1) + scale_y_log10()
+## ----fitModel2e2, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
+day.brm1 %>%
+    ggemmeans(~TREAT) %>%
+    plot(add.data=TRUE) +
+    scale_y_log10()
+
+
+## ----fitModel2e3, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
+day.brm1 %>% 
+    conditional_effects() %>%
+    plot(points=TRUE)
+day.brm1 %>%
+    conditional_effects() %>%
+    plot(points=TRUE) %>%
+    wrap_plots() &
+    scale_y_log10()
 
 
 ## ---- echo = FALSE, eval = FALSE----------------------------------------------
 ## day %>%
 ##     group_by(TREAT) %>%
-##     summarise(BARNACLE = sample(log(BARNACLE), 1000, replace = TRUE),
-##               R = 1:1000) %>%
-##     ungroup() %>%
-##     group_by(R) %>%
-##     summarise(D = diff(BARNACLE), Comp = 1:3) %>%
-##     ungroup() %>%
-##     group_by(Comp) %>%
-##     summarise(sd(D))
+##     summarise(mean(log(BARNACLE)),
+##               sd(log(BARNACLE)))
+## 
+## model.matrix(~TREAT, data = day)
+## apply(model.matrix(~TREAT, data = day), 2, sd)
+## sd(log(day$BARNACLE))/apply(model.matrix(~TREAT, data = day), 2, sd)
+## 
+## ## day %>%
+## ##     group_by(TREAT) %>%
+## ##     summarise(BARNACLE = sample(log(BARNACLE), 1000, replace = TRUE),
+## ##               R = 1:1000) %>%
+## ##     ungroup() %>%
+## ##     group_by(R) %>%
+## ##     summarise(D = diff(BARNACLE), Comp = 1:3) %>%
+## ##     ungroup() %>%
+## ##     group_by(Comp) %>%
+## ##     summarise(sd(D))
 
 
 ## ----fitModel2h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-priors <- prior(normal(3, 1),  class = 'Intercept') +
+priors <- prior(normal(3.1, 1),  class = 'Intercept') +
     prior(normal(0, 1), class = 'b')
-day.brm2 <- brm(bf(BARNACLE ~ TREAT,
-                   family = poisson(link = 'log')), 
+day.form <- bf(BARNACLE ~ TREAT,
+                   family = poisson(link = 'log'))
+day.brm2 <- brm(day.form, 
                 data = day,
                 prior = priors, 
                 sample_prior = 'only', 
                 iter = 5000,
                 warmup = 2500,
-                chains = 4,
+                chains = 3, cores = 3,
                 thin = 5,
-                refresh = 0)
+                refresh = 0,
+                backend = "cmdstan")
 
 
 ## ----fitModel2i, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
 day.brm2 %>% ggpredict() %>% plot(add.data=TRUE)
-day.brm2 %>% ggpredict() %>% plot(add.data=TRUE) %>% `[[`(1) + scale_y_log10()
+day.brm2 %>%
+    ggpredict() %>%
+    plot(add.data=TRUE) %>%
+    wrap_plots() &
+    scale_y_log10()
 
+
+## ----fitModel2i2, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
 day.brm2 %>% ggemmeans(~TREAT) %>% plot(add.data=TRUE)
-day.brm2 %>% ggemmeans(~TREAT) %>% plot(add.data=TRUE) + scale_y_log10()
+day.brm2 %>%
+    ggemmeans(~TREAT) %>%
+    plot(add.data=TRUE) %>%
+    wrap_plots() &
+    scale_y_log10()
 
+
+## ----fitModel2i3, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
 day.brm2 %>% conditional_effects() %>%  plot(points=TRUE)
-day.brm2 %>% conditional_effects() %>%  plot(points=TRUE) %>% `[[`(1) + scale_y_log10()
+day.brm2 %>%
+    conditional_effects() %>%
+    plot(points=TRUE) %>%
+    wrap_plots() &
+    scale_y_log10()
 
 
 ## ----fitModel2j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-day.brm3 <- day.brm2 %>% update(sample_prior = 'yes', refresh = 0)
+day.brm3 <- day.brm2 %>% update(sample_prior = 'yes', refresh = 0) 
 
 
 ## ----fitModel2k, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
@@ -319,7 +392,7 @@ pp_check(day.rstanarm3, x=as.numeric(day$TREAT), plotfun='intervals')
 
 
 ## ----modelValidation4a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-preds <- posterior_predict(day.rstanarm3,  nsamples=250,  summary=FALSE)
+preds <- posterior_predict(day.rstanarm3,  ndraws=250,  summary=FALSE)
 day.resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = day$BARNACLE,
                             fittedPredictedResponse = apply(preds, 2, median),
@@ -349,7 +422,7 @@ day.brm3 %>% pp_check(group='TREAT', type='intervals')
 
 
 ## ----modelValidation6a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-preds <- day.brm3 %>% posterior_predict(nsamples = 250,  summary = FALSE)
+preds <- day.brm3 %>% posterior_predict(ndraws = 250,  summary = FALSE)
 day.resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = day$BARNACLE,
                             fittedPredictedResponse = apply(preds, 2, median),
@@ -366,9 +439,10 @@ day.rstanarm3 %>% ggemmeans(~TREAT,  type='fixed') %>% plot(add.data=TRUE)
 
 
 ## ----partialPlot1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-day.rstanarm3 %>% fitted_draws(newdata=day) %>%
+day.rstanarm3 %>%
+    epred_draws(newdata=day) %>%
   median_hdci() %>%
-  ggplot(aes(x=TREAT, y=.value)) +
+  ggplot(aes(x=TREAT, y=.epred)) +
   geom_pointrange(aes(ymin=.lower, ymax=.upper)) + 
   geom_line() +
   geom_point(data=day,  aes(y=BARNACLE,  x=TREAT))
@@ -387,12 +461,13 @@ day.brm3 %>% ggemmeans(~TREAT) %>% plot(add.data = TRUE)
 
 
 ## ----partialPlot2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-day.brm3 %>% fitted_draws(newdata = day) %>%
-  median_hdci() %>%
-  ggplot(aes(x = TREAT, y = .value)) +
-  geom_pointrange(aes(ymin = .lower, ymax = .upper)) + 
-  geom_line() +
-  geom_point(data = day,  aes(y = BARNACLE,  x = TREAT))
+day.brm3 %>%
+    epred_draws(newdata = day) %>%
+    median_hdci() %>%
+    ggplot(aes(x = TREAT, y = .epred)) +
+    geom_pointrange(aes(ymin = .lower, ymax = .upper)) + 
+    geom_line() +
+    geom_point(data = day,  aes(y = BARNACLE,  x = TREAT))
 
 
 ## ----summariseModel1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
@@ -410,22 +485,69 @@ tidyMCMC(day.rstanarm3$stanfit, estimate.method='median',  conf.int=TRUE,  conf.
 day.tidy <- tidyMCMC(day.rstanarm3$stanfit, estimate.method='median',  conf.int=TRUE,  conf.method='HPDinterval',  rhat=TRUE, ess=TRUE)
 
 
+## ----summariseModel1dd, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+day.rstanarm3$stanfit %>%
+    summarise_draws(median,
+                    HDInterval::hdi,
+                    rhat, length, ess_bulk, ess_tail)
+
+
+## ----summariseModel1d2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+day.rstanarm3$stanfit %>%
+    summarise_draws(median,
+                    ~HDInterval::hdi(.x, credMass = 0.9),
+                    rhat, length, ess_bulk, ess_tail)
+
+
+## ----summariseModel1d3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+day.rstanarm3$stanfit %>%
+    summarise_draws(
+        ~ median(exp(.x)),
+        ~HDInterval::hdi(exp(.x)),
+        rhat, length, ess_bulk, ess_tail)
+
+
 ## ----summariseModel1m, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 day.rstanarm3$stanfit %>% as_draws_df()
 day.rstanarm3$stanfit %>%
   as_draws_df() %>%
   summarise_draws(
-    "median",
+    median,
     ~ HDInterval::hdi(.x),
-    "rhat",
-    "ess_bulk"
+    rhat,
+    length,
+    ess_bulk, ess_tail
   )
+
+day.rstanarm3$stanfit %>%
+    as_draws_df() %>%
+    exp() %>%
+    summarise_draws(
+        median,
+        ~ HDInterval::hdi(.x),
+        rhat,
+        length,
+        ess_bulk, ess_tail
+    )
 
 
 ## ----summariseModel1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 day.rstanarm3 %>% get_variables()
 day.draw <- day.rstanarm3 %>% gather_draws(`.Intercept.*|.*TREAT.*`,  regex=TRUE)
 day.draw
+
+exceedP <- function(x, Val = 0) sum(x>Val)/length(x)
+
+day.rstanarm3 %>%
+    gather_draws(`.Intercept.*|.*TREAT.*`,  regex=TRUE) %>%
+    mutate(.value = exp(.value)) %>%
+    summarise_draws(median,
+                    HDInterval::hdi,
+                    rhat,
+                    length,
+                    ess_bulk,
+                    ess_tail,
+                    ~ exceedP(.x, 1))
 
 
 ## ----summariseModel1c1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
@@ -456,7 +578,14 @@ day.rstanarm3 %>%
   gather_draws(`.*TREAT.*`, regex=TRUE) %>% 
   ggplot() + 
     stat_halfeye(aes(x=.value,  y=.variable)) +
-    geom_vline(xintercept = 1, linetype = 'dashed')
+    geom_vline(xintercept = 0, linetype = 'dashed')
+
+day.rstanarm3 %>% 
+  gather_draws(`.*TREAT.*`, regex=TRUE) %>% 
+  ggplot() + 
+    stat_halfeye(aes(x=exp(.value),  y=.variable)) +
+    geom_vline(xintercept = 1, linetype = 'dashed') +
+    scale_x_continuous(trans = scales::log2_trans())
 
 
 ## ----summariseModel1c7, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
@@ -520,10 +649,22 @@ day.brm3 %>% as_draws_df()
 day.brm3 %>%
   as_draws_df() %>%
   summarise_draws(
-    "median",
-    ~ HDInterval::hdi(.x),
-    "rhat",
-    "ess_bulk"
+    median,
+    HDInterval::hdi,
+    rhat,
+    length,
+    ess_bulk, ess_tail
+  )
+
+day.brm3 %>%
+  as_draws_df() %>%
+    exp() %>%
+  summarise_draws(
+    median,
+    HDInterval::hdi,
+    rhat,
+    length,
+    ess_bulk, ess_tail
   )
 
 
@@ -532,6 +673,27 @@ day.brm3 %>% get_variables()
 day.draw <- day.brm3 %>%
     gather_draws(`.Intercept.*|.*TREAT.*`,  regex = TRUE)
 day.draw
+
+day.brm3 %>%
+    gather_draws(`.Intercept.*|.*TREAT.*`,  regex = TRUE) %>%
+    mutate(.value = exp(.value)) %>%
+    summarise_draws(median,
+                    ~HDInterval::hdi(.x, credMass = 0.95),
+                    rhat,
+                    length,
+                    ess_bulk, ess_tail)
+    
+
+exceedP <- function(x, Val = 0) sum(x>Val)/length(x)
+day.brm3 %>%
+    tidy_draws() %>%
+    exp() %>%
+    dplyr::select(starts_with("b_")) %>%
+    summarise_draws(median,
+                    ~HDInterval::hdi(.x, credMass = 0.9),
+                    rhat,
+                    ess_bulk, ess_tail,
+                    ~exceedP(.x, 1))
 
 
 ## ----summariseModel2c1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
@@ -645,6 +807,30 @@ day.brm3 %>% posterior_samples() %>% as_tibble()
 day.brm3 %>% bayes_R2(summary=FALSE) %>% median_hdci
 
 
+## ----summariseModel2k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+0.1 * sd(log(day$BARNACLE))
+day.brm3 %>% rope(range = c(-0.04, 0.04))
+rope(day.brm3, range = c(-0.04, 0.04)) %>% plot()
+
+## Or based on fractional scale
+day.brm3 %>%
+    as_draws_df('^b_TREAT.*', regex = TRUE) %>%
+    exp() %>% 
+    ## equivalence_test(range = c(0.9, 1.1))
+    rope(range = c(0.9, 1.1))
+day.mcmc <-
+    day.brm3 %>% as_draws_df('^b_TREAT.*', regex = TRUE) %>%
+    exp()
+day.mcmc %>%
+    rope(range = c(0.9, 1.1))
+day.mcmc %>%
+    rope(range = c(0.9, 1.1)) %>%
+    plot(day.mcmc)
+
+day.mcmc %>%
+    equivalence_test(day.mcmc, range = c(0.9, 1.1)) 
+
+
 ## ----Probability1a, results='markdown', echo=1,eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 day.rstanarm3 %>% emmeans(pairwise ~TREAT, type='response')
 day.pairwise <- (day.rstanarm3 %>%
@@ -692,7 +878,7 @@ day.em %>% group_by(contrast) %>% summarize(P=sum(Fit<1)/n())
 day.em %>% group_by(contrast) %>% summarize(P=sum(Fit>1.1)/n())
 
 
-## ----Probability2a, results='markdown', echo=1,eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+## ----Probability2a, results='markdown', echo=TRUE,eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 day.brm3 %>%
     emmeans(~TREAT, type = 'response') %>%
     pairs()
@@ -701,6 +887,35 @@ day.pairwise <- day.brm3 %>%
     emmeans(~TREAT, type = 'response') %>%
     pairs() %>%
     as.data.frame()
+##OR
+day.brm3 %>%
+    emmeans(~TREAT) %>%
+    pairs() %>%
+    tidy_draws() %>%
+    exp() %>%
+    summarise_draws(median)
+##OR
+day.brm3 %>%
+    emmeans(~TREAT) %>%
+    pairs() %>%
+    gather_emmeans_draws() %>%
+    mutate(.ratio = exp(.value)) %>%
+    ## median_hdci(.ratio)
+    summarise(
+        median_hdci(.ratio),
+        P = sum(.ratio>1)/n(),
+        ROPE = rope(.ratio, range = c(0.9, 1.1))$ROPE_Percentage)
+    ## summarise(across(c(.value, .ratio), c(median, HDInterval::hdi)))
+    ## summarise(across(c(.value, .ratio), c(median_hdci)))
+
+day.mcmc <-
+    day.brm3 %>%
+    emmeans(~TREAT) %>%
+    pairs() %>%
+    tidy_draws() %>%
+    dplyr::select(-.chain, -.iteration, -.draw) %>%
+    exp() 
+rope(day.mcmc, range = c(0.9, 1.1)) %>% plot()
 
 
 ## ----Probability2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
@@ -767,6 +982,23 @@ day.brm3 %>%
     geom_halfeyeh() +
     geom_vline(xintercept = 0, color = 'red') + 
     facet_wrap(~contrast, scales = 'free')
+
+
+day.brm3 %>%
+    emmeans(~TREAT, type = 'response') %>%
+    pairs() %>%
+    gather_emmeans_draws() %>%
+    mutate(.value = exp(.value)) %>%
+    ggplot(aes(x = .value)) + 
+    geom_density_ridges_gradient(aes(y = contrast,
+                                     fill = factor(stat(x>0))),
+                                 alpha=0.4, colour = 'white',
+                                 quantile_lines = TRUE,
+                                 quantiles = c(0.025, 0.975)) +
+    geom_vline(xintercept = 1, linetype = 'dashed') +
+    scale_x_continuous(trans = scales::log2_trans()) +
+    scale_fill_viridis_d() 
+
 
 
 ## ----Probability1c, results='markdown', echo=TRUE, eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----

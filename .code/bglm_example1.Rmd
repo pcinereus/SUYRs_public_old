@@ -49,7 +49,9 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FAL
 Load the necessary libraries
 
 ```{r libraries, results='markdown', eval=TRUE}
+library(tidyverse)  #for data wrangling etc
 library(rstanarm)   #for fitting models in STAN
+library(cmdstanr)   #for cmdstan
 library(brms)       #for fitting models in STAN
 library(standist)   #for exploring distributions
 library(coda)       #for diagnostics
@@ -62,11 +64,12 @@ library(broom)      #for tidying outputs
 library(tidybayes)  #for more tidying outputs
 library(HDInterval) #for HPD intervals
 library(ggeffects)  #for partial plots
-library(tidyverse)  #for data wrangling etc
 library(broom.mixed)#for summarising models
 library(posterior)  #for posterior draws
 library(ggeffects)  #for partial effects plots
 library(patchwork)  #for multi-panel figures
+library(bayestestR) #for ROPE
+library(see)        #for some plots
 theme_set(theme_grey()) #put the default ggplot theme back
 source('helperFunctions.R')
 ```
@@ -153,25 +156,138 @@ y_i &\sim{} \mathcal{N}(\mu_i, \sigma^2)\\
 \mu_i &= \beta_0 + \beta_1 x_i\\
 \beta_0 &\sim{} \mathcal{N}(164,65)\\
 \beta_1 &\sim{} \mathcal{N}(0,1)\\
-\sigma &\sim{} \mathcal{cauchy}(0,2)\\
+\sigma &\sim{} \mathcal{cauchy}(0,65)\\
+OR\\
+\sigma &\sim{} \mathcal{t}(3,0,65)\\
 OR\\
 \sigma &\sim{} \mathcal{Exp}(0.016)\\
 OR\\
-\sigma &\sim{} \mathcal{gamma}(2,1)\\
+\sigma &\sim{} \mathcal{gamma}(2,0.05)\\
 \end{align}
 $$
 
 # Fit the model {.tabset .tabset-faded}
 
+Note, for routines that take more than a couple of seconds to perform
+(such as most Bayesian models), it is a good idea to cache the
+Rmarkdown chunks in which the routine is performed. That way, the
+routine will only be run the first time and any objects generated will
+be stored for future use. Thereafter, provided the code has not
+changed, the routine will not be re-run. Rather, `knitr` will just
+retrieve the cached objects and continue on.
+
+One of the most difficult aspects of performing Bayesian analyses is
+the specification of priors.  For instances where there are some
+previous knowledge available and a desire to incorporate those data,
+the difficulty is in how to ensure that the information is
+incorporated correctly.  However, for instances where there are no
+previous relevant information and so a desire to have the posteriors
+driven entirely by the new data, the difficulty is in how to define
+priors that are both vague enough (not bias results in their
+direction) and yet not so vague as to allow the MCMC sampler to drift
+off into unsupported regions (and thus get stuck and yield spurious
+estimates).
+
+For early implementations of MCMC sampling routines (such as
+Metropolis Hasting and Gibbs), it was fairly common to see very vague
+priors being defined.  For example, the priors on effects, were
+typically normal priors with mean of 0 and variance of `1e+06`
+(1,00,000).  These are very vague priors.  Yet for some samplers
+(e.g. NUTS), such vague priors can encourage poor behaviour of the
+sampler - particularly if the posterior is complex. It is now
+generally advised that priors should (where possible) be somewhat
+**weakly informative** and to some extent, represent the bounds of
+what are feasible and sensible estimates.
+
+The degree to which priors __influence__ an outcome (whether by having
+a pulling effect on the estimates or by encouraging the sampler to
+drift off into unsupported regions of the posterior) is dependent on:
+
+- the relative sparsity of the data - the larger the data, the less
+  weight the priors have and thus less influence they exert.
+- the complexity of the model (and thus posterior) - the more
+  parameters, the more sensitive the sampler is to the priors.
+
+The sampled posterior is the product of both the likelihood and the
+prior - all of which are multidimensional.  For most applications, it
+would be vertically impossible to define a sensible multidimensional
+prior.  Hence, our only option is to define priors on individual
+parameters (e.g. the intercept, slope(s), variance etc) and to hope
+that if they are individually sensible, they will remain collectively
+sensible.
+
+So having (hopefully) impressed upon the notion that priors are an
+important consideration, I will now attempt to synthesise some of the
+approaches that can be employed to arrive at weakly informative priors
+that have been gleaned from various sources.  Largely, this advice has
+come from the following resources:
+
+- https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
+- http://svmiller.com/blog/2021/02/thinking-about-your-priors-bayesian-analysis/
+
+I will outline some of the current main recommendations before
+summarising some approaches in a table.
+
+- weakly informative priors should contain enough information so as to
+  regularise (discourage unreasonable parameter estimates whilst
+  allowing all reasonable estimates).
+- for effects parameters on scaled data, an argument could be made for
+  a normal distribution with a standard deviation of 1
+  (e.g. `normal(0,1)`), although klsome prefer a t distribution with 3
+  degrees of freedom and standard deviation of 1
+  (e.g. `student_t(3,0,1)`) - apparently a flatter t is a more robust
+  prior than a normal as an uninformative prior...
+- for unscaled data, the above priors can be scaled by using the
+  standard deviation of the data as the prior standard deviation
+  (e.g. `student_t(3,0,sd(y))`, or `sudent_t(3,0,sd(y)/sd(x))`)
+- for priors of hierachical standard deviations, priors should
+  encourage shrinkage towards 0 (particularly if the number of groups
+  is small, since otherwise, the sampler will tend to be more
+  responsive to "noise").
+  
+| Family            | Parameter                            | brms                            | rstanarm                    |
+|-------------------|--------------------------------------|---------------------------------|-----------------------------|
+| Gaussian          | Intercept                            | `student_t(3,median(y),mad(y))` | `normal(mean(y),2.5*sd(y))` |
+|                   | 'Population effects' (slopes, betas) | flat, improper priors           | `normal(0,2.5*sd(y)/sd(x))` |
+|                   | Sigma                                | `student_t(3,0,mad(y))`         | `exponential(1/sd(y))`      |
+|                   | 'Group-level effects'                | `student_t(3,0,mad(y))`         | `decov(1,1,1,1)`            |
+|                   | Correlation on group-level effects   | `ljk_corr_cholesky(1)`          |                             |
+| Poisson           | Intercept                            | `student_t(3,median(y),mad(y))` | `normal(mean(y),2.5*sd(y))` |
+|                   | 'Population effects' (slopes, betas) | flat, improper priors           | `normal(0,2.5*sd(y)/sd(x))` |
+|                   | 'Group-level effects'                | `student_t(3,0,mad(y))`         | `decov(1,1,1,1)`            |
+|                   | Correlation on group-level effects   | `ljk_corr_cholesky(1)`          |                             |
+| Negative binomial | Intercept                            | `student_t(3,median(y),mad(y))` | `normal(mean(y),2.5*sd(y))` |
+|                   | 'Population effects' (slopes, betas) | flat, improper priors           | `normal(0,2.5*sd(y)/sd(x))` |
+|                   | Shape                                | `gamma(0.01, 0.01)`             | `exponential(1/sd(y))`      |
+|                   | 'Group-level effects'                | `student_t(3,0,mad(y))`         | `decov(1,1,1,1)`            |
+|                   | Correlation on group-level effects   | `ljk_corr_cholesky(1)`          |                             |
+
+Notes:
+
+`brms`
+
+https://github.com/paul-buerkner/brms/blob/c2b24475d727c8afd8bfc95947c18793b8ce2892/R/priors.R
+
+1. In the above, for non-Gaussian families, `y` is first transformed
+  according to the family link.  If the family link is `log`, then 0.1
+  is first added to 0 values.
+2. in `brms` the minimum standard deviation for the Intercept prior is
+   `2.5`
+3. in `brms` the minimum standard deviation for group-level priors is
+   `10`.
+
+`rstanarm`
+
+http://mc-stan.org/rstanarm/articles/priors.html
+
+1. in `rstanarm` priors on standard deviation and correlation
+   associated with group-level effects are packaged up into a single
+   prior (`decov` which is a decomposition of the variance and
+   covariance matrix).
+
 <div class='HIDDEN'>
 
-Note, for routines that take more than a couple of seconds to perform (such as
-most Bayesian models), it is a good idea to cache the Rmarkdown chunks in which
-the routine is performed. That way, the routine will only be run the first time
-and any objects generated will be stored for future use. Thereafter, provided
-the code has not changed, the routine will not be re-run. Rather, `knitr` will
-just retrieve the cached objects and continue on.
-
+	
 ## frequentist
 
 For the purpose of comparing the frequentist and Bayesian outcomes, it might be
@@ -179,8 +295,10 @@ useful to start by fitting the frequentist simple linear model.  We will also
 fit this model with the predictor (fertilizer concentration) centred.
 
 ```{r lm, results='markdown', eval=TRUE, hidden=TRUE}
-summary(lm(YIELD ~ FERTILIZER, data = fert))
-summary(lm(YIELD ~ scale(FERTILIZER, scale=FALSE), data = fert))
+summary(fert.lm <- lm(YIELD ~ FERTILIZER, data = fert))
+sigma(fert.lm) 
+summary(fert.lm <- lm(YIELD ~ scale(FERTILIZER, scale=FALSE), data = fert))
+sigma(fert.lm)
 ```
 
 ## rstanarm {.tabset .tabset-pills}
@@ -344,18 +462,22 @@ to bias the outcomes, we could try the following priors (mainly plucked out of
 thin air):
 
 - $\beta_0$: normal centred at 164 with a standard deviation of 65
-- $\beta_1$: normal centred at 0 with a standard deviation of 1
-- $\sigma$: half-cauchy centred at 0 with a standard deviation of 2
+- $\beta_1$: normal centred at 0 with a standard deviation of 2
+- $\sigma$: half-t (df = 3) centred at 0 with a standard deviation of 65
 
 We can visualise each of the above as:
 
 ```{r fitModel1h1, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE, fig.width = 5, fig.height = 3}
-standist::visualize("normal(164, 65)", xlim = c(0, 300)) 
-standist::visualize("normal(0, 1)", xlim = c(-10, 10))
-standist::visualize("cauchy(0, 2)",
+standist::visualize("normal(164, 65)", xlim = c(0, 300)) +
+standist::visualize("normal(0, 2)", xlim = c(-10, 10))
+standist::visualize("student_t(3, 0, 65)",
                     "gamma(2,1)",
                     "exponential(0.016)",
                     xlim = c(-10, 50))
+
+standist::visualize("student_t(3, 0, 65)",
+                    "exponential(0.016)",
+                    xlim = c(-10, 300))
 ```
 
 I will also overlay the raw data for comparison.
@@ -363,11 +485,12 @@ I will also overlay the raw data for comparison.
 ```{r fitModel1h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
 fert.rstanarm2= stan_glm(YIELD ~ FERTILIZER, data=fert,
                          prior_intercept = normal(164, 65, autoscale=FALSE),
-                         prior = normal(0, 1, autoscale=FALSE),
-                         prior_aux = cauchy(0, 2, autoscale=FALSE),
+                         prior = normal(0, 2, autoscale=FALSE),
+                         prior_aux = student_t(3, 0, 65, autoscale=FALSE),
                          prior_PD=TRUE, 
                          iter = 5000, warmup = 1000,
-                         chains = 3, thin = 5, refresh = 0
+                         chains = 3, cores = 3,
+                         thin = 5, refresh = 0
                          )
 ```
 
@@ -379,7 +502,7 @@ ggpredict(fert.rstanarm2) %>%
 Now lets refit, conditioning on the data.
 
 ```{r fitModel1j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
-fert.rstanarm3= update(fert.rstanarm2,  prior_PD=FALSE) 
+fert.rstanarm3= update(fert.rstanarm2,  prior_PD=FALSE)  
 ```
 
 ### Plotting prior and posterior
@@ -399,7 +522,7 @@ ggpredict(fert.rstanarm3) %>% plot(add.data=TRUE)
 ```
 
 
-
+	
 ## brms {.tabset .tabset-pills}
 
 ### Using default priors
@@ -418,7 +541,8 @@ fert.brm <- brm(bf(YIELD ~ FERTILIZER),
                warmup = 1000,
                chains = 3,
                thin = 5,
-               refresh = 0)
+               refresh = 0,
+               backend = 'cmdstan')
 ```
 
 In the above:
@@ -505,7 +629,7 @@ standist::visualize("student_t(3,161.5,90.4)", xlim=c(-100,1000))
 standist::visualize("student_t(3,0,90.4)", xlim=c(-10,500))
 ```
 	
-### Assessing priors
+### Assessing priors {.tabset .tabset-pills}
 
 One way to assess the priors is to have the MCMC sampler sample purely
 from the prior predictive distribution without conditioning on the
@@ -531,28 +655,54 @@ that we have defined a proper prior for all parameters.
 
 Lets try a Gaussian (normal) distribution for the slope.  We will
 start with what is likely to be a very wide distribution (wide with
-respect to what we know about the likely slope).
+respect to what we know about the likely slope).  `rstanarm` sets the
+default for such population-level effects at 2.5 times the ratio of
+standard deviations of the response and predictor.  The reason that
+2.5 is used is that in a standard normal distribution, a standard
+deviation of 2.5 encapsulates approximately 99% of the values.  Hence,
+a standard deviation of 2.5 would represent reasonably wide
+expectations (priors).  Given that the input data are unlikely to be
+standardised, we can instead standardise the priors by multiplying the
+2.5 by the ratio of standard deviations of the response and predictor.
+
+We could adopt similar logic here, but rather than use standard
+deviation, we could use median absolute deviation to be consistent
+with other prior specifications in `brms`.  In this case, the prior
+standard deviation would be `2.5 * mad(fert$YIELD)/mad(fert$FERTILIZER)` = `2.44` 
+(which I will round to 2.5).
 
 ```{r normal_prior, results='markdown', eval=TRUE}
-standist::visualize("normal(0, 10)", xlim = c(-50,50))
-standist::visualize("normal(0, 0.1)", xlim = c(-1,1))
+standist::visualize("normal(0, 2.5)", "student_t(3, 0, 2.5)", xlim = c(-50,50))
 ```
 
 ```{r fitModel2d, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
 fert.brm1 <- brm(bf(YIELD ~ FERTILIZER),
                  data = fert,
-                 prior = prior(normal(0, 10), class = 'b'), 
+                 prior = prior(student_t(3, 0, 2.5), class = 'b'), 
                  sample_prior = 'only', 
                  iter = 5000,
                  warmup = 1000,
                  chains = 3,
                  thin = 5,
+                 backend = 'cmdstan',
                  refresh = 0)
 ```
 
-```{r fitModel2e, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
+#### ggpredict
+
+```{r fitModel2e1, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
 fert.brm1 %>% ggpredict() %>% plot(add.data=TRUE)
+```
+
+#### ggemmeans
+
+```{r fitModel2e2, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
 fert.brm1 %>% ggemmeans(~FERTILIZER) %>% plot(add.data=TRUE)
+```
+
+#### conditional_effects
+
+```{r fitModel2e3, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
 fert.brm1 %>% conditional_effects() %>%  plot(points=TRUE)
 ```
 
@@ -565,7 +715,7 @@ fert.brm1 %>% conditional_effects() %>%  plot(points=TRUE)
 - nevertheless, negative yields are considered possible, even though these are
   clearly not logical.
 
-### Defining priors
+### Defining priors 
 
 The following link provides some guidance about defining priors.
 [https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations]
@@ -577,31 +727,33 @@ not likely to bias the outcomes, we could try the following priors
 (which I have mainly plucked out of thin air):
 
 - $\beta_0$: normal centred at 164 with a standard deviation of 65
-- $\beta_1$: normal centred at 0 with a standard deviation of 1
-- $\sigma$: half-cauchy centred at 0 with a standard deviation of 2
+  - mean of 164: since `median(fert$YIELD)`
+  - sd pf 65: since `mad(fert$YIELD)`
+- $\beta_1$: normal centred at 0 with a standard deviation of 2.5
+  - sd of 2.5: since `2.5*(mad(fert$YIELD)/mad(fert$FERTILIZER))`
+- $\sigma$: half-t centred at 0 with a standard deviation of 65 OR
+  - sd pf 65: since `mad(fert$YIELD)`
 - $\sigma$: gamma with shape parameters of 2 and 1
 
 
 ```{r priors, results='markdown', eval=TRUE}
 standist::visualize("normal(164, 65)", xlim = c(-100, 300))
-standist::visualize("normal(0, 1)", xlim = c(-10, 10))
-standist::visualize("cauchy(0, 2)", xlim = c(-10, 10))
-standist::visualize("gamma(2, 1)", xlim = c(0, 10))
-standist::visualize(
-              "student_t(3, 0, 90.4)",
-              "cauchy(0, 2)",
-              "gamma(2, 1)",
-              "gamma(2, 0.5)",
-              "gamma(2, 0.2)",
-              xlim = c(0,20))
+
+standist::visualize("normal(0, 2)", xlim = c(-10, 10))
+
+standist::visualize("student_t(3, 0, 65)",
+                    "normal(0, 65)",
+                    "gamma(2,0.05)",
+                    xlim = c(0, 100))
+    
 ```
 
 I will also overlay the raw data for comparison.
 
 ```{r fitModel2h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
 priors <- prior(normal(164, 65),  class='Intercept') +
-    prior(normal(0, 1), class='b') +
-    prior(gamma(2, 1),  class='sigma')
+    prior(normal(0, 2.5), class='b') +
+    prior(student_t(3, 0, 65),  class='sigma')
 
 fert.brm2 = brm(bf(YIELD ~ FERTILIZER),
                 data=fert,
@@ -611,26 +763,42 @@ fert.brm2 = brm(bf(YIELD ~ FERTILIZER),
                 warmup = 1000,
                 chains = 3, cores = 3,
                 thin = 5,
+                backend = 'cmdstan',
                 refresh = 0)
 ```
 
-```{r fitModel2i, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
+
+#### {.tabset .tabset-pills .unnumbered .unlisted}
+
+##### ggpredict
+
+```{r fitModel2i1, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
 fert.brm2 %>%
     ggpredict() %>%
     plot(add.data=TRUE)
-#OR
+```
+
+##### ggemmeans
+
+```{r fitModel2i2, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
 fert.brm2 %>%
     ggemmeans(~FERTILIZER) %>%
     plot(add.data = TRUE)
-#OR
+```
+
+##### conditional_effects
+
+```{r fitModel2i3, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
 fert.brm2 %>%
     conditional_effects() %>%
     plot(points = TRUE)
 ```
 
+#### {.tabset .tabset-pills .unnumbered .unlisted}
+
 ```{r fitModel2j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE}
 fert.brm3 <- update(fert.brm2, sample_prior = 'yes', refresh = 0)
-#OR
+#OR 
 fert.brm3 = brm(bf(YIELD ~ FERTILIZER),
                 data=fert,
                 prior=priors,
@@ -639,12 +807,39 @@ fert.brm3 = brm(bf(YIELD ~ FERTILIZER),
                 warmup = 1000,
                 chains = 3, cores = 3,
                 thin = 5,
+                backend = 'cmdstan',
                 refresh = 0)
 ```
 
 ```{r fitModel2j2, results='markdown', eval=TRUE, echo = FALSE, hidden=TRUE}
 save(fert.brm3, file = '../ws/testing/fert.brm3.RData')
 ```
+
+
+##### ggpredict
+
+```{r fitModel2k1, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
+fert.brm3 %>%
+    ggpredict() %>%
+    plot(add.data=TRUE)
+```
+
+##### ggemmeans
+
+```{r fitModel2k2, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
+fert.brm3 %>%
+    ggemmeans(~FERTILIZER) %>%
+    plot(add.data = TRUE)
+```
+
+##### conditional_effects
+
+```{r fitModel2k3, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE}
+fert.brm3 %>%
+    conditional_effects() %>%
+    plot(points = TRUE)
+```
+
 
 ### Plotting prior and posterior
 
@@ -676,7 +871,7 @@ uncentred.  Hence, the prior and posterior are on different scales.
  
 ```{r fitModel2k, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE, fig.width = 8, fig.height = 4}
 fert.brm3 %>% get_variables()
-fert.brm3 %>% SUYR_prior_and_posterior() 
+fert.brm3 %>% SUYR_prior_and_posterior()
 ```
 
 ### Exploring the stan code
@@ -795,19 +990,19 @@ $$
 where $d$ is the degrees of freedom (for Cauchy marginal, $d=1$) and
 $t^d_{1-(1-q)/2}$ is the $q_{th}$ quantile of a Student t with $d$
 degrees of freedom. Hence if we considered variance likely to be in
-the range of [0,10], we could define a loggamma prior of:
+the range of [0,100], we could define a loggamma prior of:
 
 $$
 \begin{align}			
 a &= \frac{1}{2} = 0.5\\
-b &= \frac{10^2}{2*161.447} = 0.31\\
-\tau &\sim{} log\Gamma(0.5,0.31)
+b &= \frac{100^2}{2*161.447} = 30.9\\
+\tau &\sim{} log\Gamma(0.5,30.9)
 \end{align}
 $$
 
 
 ```{r fitModel3b5, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE, paged.print=FALSE,tidy.opts = list(width.cutoff = 80)}
-standist::visualize("gamma(0.5, 0.31)", xlim=c(-5,20))
+standist::visualize("gamma(0.5, 0.032)", xlim=c(-5,100))
 ```
 
 **Intercept**
@@ -892,9 +1087,9 @@ fert.inla1 <- inla(YIELD ~ FERTILIZER,
                       mean = 0,
                       prec = 0.0384),
                   control.family = list(hyper = list(prec = list(prior = "loggamma",
-                                                                param = c(0.5, 0.31)))),
+                                                                param = c(0.5, 0.032)))),
                   control.compute = list(config = TRUE, dic = TRUE, waic = TRUE, cpo = TRUE)
-                  )
+                  ) 
 ```
 
 Lets briefly compare the parameter estimates. In the following,
@@ -1574,7 +1769,7 @@ We need to supply:
 - fitted (predicted) responses (averaged) associated with each observation
 
 ```{r modelValidation4a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
-preds <- posterior_predict(fert.rstanarm3,  nsamples=250,  summary=FALSE)
+preds <- posterior_predict(fert.rstanarm3,  ndraws=250,  summary=FALSE)
 fert.resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = fert$YIELD,
                             fittedPredictedResponse = apply(preds, 2, median),
@@ -1605,7 +1800,7 @@ overlayed on top of 50 density distributions generated from draws from the model
 the observed data.
 
 ```{r modelValidation5b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4}
-fert.brm3 %>% pp_check( type='dens_overlay', nsamples=100)
+fert.brm3 %>% pp_check( type='dens_overlay', ndraws=100)
 ```
 The model draws appear to be consistent with the observed data.
 
@@ -1858,7 +2053,6 @@ fert.rstanarm3 %>% fitted_draws(newdata=fert) %>%
 ### conditional_effects
 
 ```{r partialPlot2d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
-fert.brm3 %>% ggemmeans(~FERTILIZER) %>% plot(add.data = TRUE) 
 fert.brm3 %>% conditional_effects() 
 fert.brm3 %>% conditional_effects() %>% plot(points = TRUE)
 fert.brm3 %>%
@@ -2112,6 +2306,24 @@ fert.tidy <- tidyMCMC(fert.rstanarm3$stanfit, estimate.method='median',  conf.in
 - sigma is estimated to be `r round(as.numeric(fert.tidy[3,2]),2)`
 - Rhat and number of effective samples for each parameter are also provided and all look good.
 
+### summarise_draws (posterior)
+
+```{r summariseModel1dd, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+fert.rstanarm3$stanfit %>%
+    summarise_draws(median,
+                    HDInterval::hdi,
+                    rhat, length, ess_bulk, ess_tail)
+```
+
+We can also alter the CI level.
+
+```{r summariseModel1d2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+fert.rstanarm3$stanfit %>%
+    summarise_draws(median,
+                    ~HDInterval::hdi(.x, credMass = 0.9),
+                    rhat, length, ess_bulk, ess_tail)
+```
+
 ### as_draws_df (posterior)
 
 ```{r summariseModel1m, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
@@ -2119,10 +2331,10 @@ fert.rstanarm3$stanfit %>% as_draws_df()
 
 fert.rstanarm3$stanfit %>%
     as_draws_df() %>%
-    summarise_draws("median",
+    summarise_draws(median,
                     ~ HDInterval::hdi(.x),
-                    "rhat",
-                    "ess_bulk")
+                    rhat,
+                    ess_bulk, ess_tail)
 ```
 
 ### tidy_draws
@@ -2294,6 +2506,25 @@ fert.tidy <- tidyMCMC(fert.brm3$fit, estimate.method='median',  conf.int=TRUE,  
 - sigma is estimated to be `r round(as.numeric(fert.tidy[3,2]),2)`
 - Rhat and number of effective samples for each parameter are also provided and all look good.
 
+### summarise_draws (posterior)
+
+```{r summariseModel2dd, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+fert.brm3 %>%
+    summarise_draws(median,
+                    HDInterval::hdi,
+                    rhat, length, ess_bulk, ess_tail)
+```
+
+We can also alter the CI level.
+
+```{r summariseModel2d2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+fert.brm3 %>%
+    summarise_draws(median,
+                    ~HDInterval::hdi(.x, credMass = 0.9),
+                    rhat, length, ess_bulk, ess_tail)
+```
+
+To narrow down to just the parameters of interest, see the code under the **tidy_draws** tab.
 	
 ### as_draws_df (posterior)
 
@@ -2307,6 +2538,14 @@ Return the draws (samples) for each parameter in wide format
 
 ```{r summariseModel2d1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
 fert.brm3 %>% tidy_draws()
+
+fert.brm3 %>% get_variables()
+fert.brm3$fit %>%
+    tidy_draws() %>%
+    dplyr::select(matches('^b_.*|^sigma'))  %>%
+    summarise_draws(median,
+                    HDInterval::hdi,
+                    rhat, length, ess_bulk, ess_tail)
 ```
 
 The above can be useful for exploring the full posteriors of all the
@@ -2983,10 +3222,41 @@ fert.rstanarm3 %>% tidy_draws() %>% summarise(P=sum(FERTILIZER>0)/n())
 - the probability of a positive effect of Fertilizer on grass Yield is 1.  That
   is, there is, we are 100% confident that there is an effect.
 
+### ROPE
+
+The procedure highlighted above for calculating excedence
+probabilities evaluates the degree of evidence for a effect in a
+particular direction.  However, there are other instances where there
+is a desire to evaluate the evidence that something has change (either
+increased or decreased).  Such purposes are similar to the Frequentist
+pursuit of testing a null hypothesis (e.g. effect = 0).
+
+The Region of Practical Equivalence (ROPE) evaluates evidence that an
+effect is "practically equivalent" to a value (e.g. 0) by calculating
+the proportion of effects that are within a nominated range.
+@Kruschke-2018-270 argued that for standardized parameters, the range
+of -0.1 to 0.1 would envelop a negligible effect based on @Cohen-1988.
+@Kruschke-2018-270 also suggested that this range could be extended to
+non-standardized parameters by multiplying by the standard deviation
+of the response.  Accordingly, calculating the proportion of posterior
+density within this ROPE could act as a form of "null-hypothesis"
+testing in a Bayesian framework.
+
+```{r Probability1bb, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,paged.print=FALSE}
+0.1 * sd(fert$YIELD)/sd(fert$FERTILIZER)
+## Cannot pipe to rope if want to pipe rope to plot()
+bayestestR::rope(fert.rstanarm3, parameters = 'FERTILIZER', range = c(-0.08, 0.08), ci_method = "HDI") 
+bayestestR::rope(fert.rstanarm3, parameters = 'FERTILIZER', range = c(-0.08, 0.08), ci_method = "HDI") %>% plot()
+
+bayestestR::equivalence_test(fert.rstanarm3, parameters = 'FERTILIZER', range = c(-0.08, 0.08), ci_method = "HDI")  
+bayestestR::equivalence_test(fert.rstanarm3, parameters = 'FERTILIZER', range = c(-0.08, 0.08), ci_method = "HDI") %>% plot()
+
+```
+
 ### Change 100 to 200 (Method 1)
 
 ```{r Probability1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5, echo=1:2}
-newdata = list(FERTILIZER=c(200, 100)) 
+newdata <- list(FERTILIZER=c(200, 100)) 
 fert.rstanarm3 %>% emmeans(~FERTILIZER,  at=newdata) %>% pairs()
 fert.mcmc <- fert.rstanarm3 %>% emmeans(~FERTILIZER,  at=newdata) %>% pairs() %>%
   as.data.frame()
@@ -2997,10 +3267,26 @@ fert.mcmc <- fert.rstanarm3 %>% emmeans(~FERTILIZER,  at=newdata) %>% pairs() %>
 - the change in Yield associated with an increase in Fertilizer concentration
   from 100 to 200 is `r fert.mcmc[1, 2] %>% round(2)`.
 
+We can alternatively express this as a percentage change...
+
+```{r Probability1c2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5, echo=1:2}
+newdata <- list(FERTILIZER=c(200, 100)) 
+fert.rstanarm3 %>% emmeans(~FERTILIZER,  at=newdata) %>% regrid(transform = "log") %>% pairs() %>% regrid()
+```
+
 If we want to derive other properties, such as the percentage change, then we
 use `tidy_draws()` and then simple `tidyverse` spreadsheet operation.
 
 ```{r Probability1d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+fert.rstanarm3 %>% emmeans(~FERTILIZER,  at=newdata) %>%
+    regrid(transform = "log") %>%
+    pairs() %>%
+    regrid() %>%
+    tidy_draws() %>%
+    summarise_draws(median,
+                    HDInterval::hdi,
+                    P= ~ sum(.x>1.5)/length(.x))
+
 fert.mcmc <- fert.rstanarm3 %>% emmeans(~FERTILIZER,  at=newdata) %>% 
   tidy_draws() %>%
   rename_with(~str_replace(., 'FERTILIZER ', 'p')) %>%
@@ -3021,6 +3307,7 @@ Alternatively, we could use `median_hdci`
 
 ```{r Probability1f, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
 fert.mcmc %>% median_hdci(PEff)
+fert.mcmc %>% median_hdci(PEff, Eff)
 ```
 
 **Conclusions:**
@@ -3052,25 +3339,25 @@ fert.mcmc %>% hypothesis('PEff>50')
 
 
 
-	### Change 100 to 200 (Method 2)
+### Change 100 to 200 (Method 2)
 	
-	```{r Probability1i, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+```{r Probability1i, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
  newdata = list(FERTILIZER=c(200, 100)) 
  fert.rstanarm3 %>%
      emmeans(~FERTILIZER,  at=newdata) %>%
      pairs() %>%
      tidy_draws() %>%
      summarise(across(contains('contrast'),
-                      list(P = ~ sum(.>80)/n(),
+                      list(P = ~ sum(.>50)/n(),
                            HDCI = ~ median_hdci(.)),
                       .names = c('{.fn}')
                       )) %>%
      tidyr::unpack(HDCI)
- ```
+```
  
 We can also express this as a percentage change
 	
-	```{r Probability1j, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+```{r Probability1j, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
  newdata = list(FERTILIZER=c(200, 100)) 
  ## Simple
  fert.rstanarm3 %>%
@@ -3096,12 +3383,17 @@ We can also express this as a percentage change
                       )) %>%
      tidyr::unpack(HDCI)
 
- ```
+ ## OR
+ fert.mcmc %>%
+     summarise_draws(median,
+                     HDInterval::hdi,
+                     P = ~ sum(.x>50)/length(.x))
+```
  
 ### Change 100 to 200 (Method 3)
 	
-	```{r Probability1k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
- fert.rstanarm3 %>%
+```{r Probability1k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+fert.rstanarm3 %>%
      linpred_draws(newdata = as.data.frame(newdata)) %>%
      ungroup() %>%
      group_by(.draw) %>%
@@ -3138,7 +3430,7 @@ We can also express this as a percentage change
      pivot_longer(cols = -.draw) %>%
      group_by(name) %>%
      median_hdci()
- ```
+```
  
 
 ## brms {.tabset .tabset-pills}
@@ -3192,12 +3484,43 @@ fert.brm3 %>%
 #OR
 fert.brm3 %>%
     tidy_draws() %>%
-    summarise(P=sum(b_FERTILIZER>0.9)/n())
+    summarise(P=sum(b_FERTILIZER>0.7)/n())
 fert.brm3 %>%
     tidy_draws() %>%
     ggplot(aes(x=b_FERTILIZER)) +
     geom_density(fill='orange') +
-    geom_vline(xintercept=0.9, linetype='dashed')
+    geom_vline(xintercept=0.7, linetype='dashed')
+```
+
+### ROPE
+
+The procedure highlighted above for calculating excedence
+probabilities evaluates the degree of evidence for a effect in a
+particular direction.  However, there are other instances where there
+is a desire to evaluate the evidence that something has change (either
+increased or decreased).  Such purposes are similar to the Frequentist
+pursuit of testing a null hypothesis (e.g. effect = 0).
+
+The Region of Practical Equivalence (ROPE) evaluates evidence that an
+effect is "practically equivalent" to a value (e.g. 0) by calculating
+the proportion of effects that are within a nominated range.
+@Kruschke-2018-270 argued that for standardized parameters, the range
+of -0.1 to 0.1 would envelop a negligible effect based on @Cohen-1988.
+@Kruschke-2018-270 also suggested that this range could be extended to
+non-standardized parameters by multiplying by the standard deviation
+of the response.  Accordingly, calculating the proportion of posterior
+density within this ROPE could act as a form of "null-hypothesis"
+testing in a Bayesian framework.
+
+```{r Probability2bb, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,paged.print=FALSE}
+0.1 * sd(fert$YIELD)/sd(fert$FERTILIZER)
+## Cannot pipe to rope if want to pipe rope to plot()
+bayestestR::rope(fert.brm3, parameters = 'FERTILIZER', range = c(-0.08, 0.08), ci_method = "HDI") 
+bayestestR::rope(fert.brm3, parameters = 'FERTILIZER', range = c(-0.08, 0.08), ci_method = "HDI") %>% plot()
+
+bayestestR::equivalence_test(fert.brm3, parameters = 'FERTILIZER', range = c(-0.08, 0.08), ci_method = "HDI")  
+bayestestR::equivalence_test(fert.brm3, parameters = 'FERTILIZER', range = c(-0.08, 0.08), ci_method = "HDI") %>% plot()
+
 ```
 
 ### Change 100 to 200 (Method 1)
@@ -3218,12 +3541,32 @@ fert.mcmc <- fert.brm3 %>%
 - the change in Yield associated with an increase in Fertilizer concentration
   from 100 to 200 is `r fert.mcmc[1, 2] %>% round(2)`.
 
+We can alternatively express this as a percentage change...
+
+```{r Probability2c2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5, echo=1:2}
+newdata <- list(FERTILIZER=c(200, 100)) 
+fert.brm3 %>%
+    emmeans(~FERTILIZER,  at=newdata) %>%
+    regrid(transform = "log") %>%
+    pairs() %>%
+    regrid()
+```
+
 If we want to derive other properties, such as the percentage change, then we
 use `tidy_draws()` and then simple `tidyverse` spreadsheet operation.
 
 It is in combination with `emmeans()` that `tidy_draws()` really comes into its own.
 
 ```{r Probability2d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
+fert.brm3 %>% emmeans(~FERTILIZER,  at=newdata) %>%
+    regrid(transform = "log") %>%
+    pairs() %>%
+    regrid() %>%
+    tidy_draws() %>%
+    summarise_draws(median,
+                    HDInterval::hdi,
+                    P= ~ sum(.x>1.5)/length(.x))
+
 fert.mcmc <- fert.brm3 %>%
     emmeans(~FERTILIZER,  at = newdata) %>% 
     tidy_draws() %>%
@@ -3246,6 +3589,7 @@ Alternatively, we could use `median_hdci()` to focus on a specific column.
 
 ```{r Probability2f, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
 fert.mcmc %>% median_hdci(PEff)
+fert.mcmc %>% median_hdci(PEff, Eff)
 ```
 
 ```{r Probability2ff, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5}
@@ -3372,7 +3716,6 @@ fert.brm3 %>%
 </div>
 
 
-
 # Summary figures {.tabset .tabset-faded}
 
 <div class='HIDDEN'>
@@ -3455,7 +3798,8 @@ newdata = emmeans(fert.brm3, ~FERTILIZER, at = fert.grid) %>%
 newdata %>% head
 ggplot(newdata,  aes(y = .value,  x = FERTILIZER)) +
     geom_line(aes(group = .draw),  color = 'blue', alpha = 0.01) +
-    geom_point(data = fert,  aes(y = YIELD))
+    geom_point(data = fert,  aes(y = YIELD)) +
+    theme_classic()
   
 ```
 
@@ -3485,6 +3829,33 @@ ggplot(newdata,  aes(y=.value,  x=FERTILIZER)) +
     scale_x_continuous(expression(Fertilizer~concentration~(g.m^-2))) +
     theme_classic()
 ```
+
+</div>
+
+<div class='HIDDEN'>
+# Methods 
+
+- The relationship between grass yield and fertiliser concentration
+  was explored using linear regression in a Bayesian framework.
+- specifically, the yield of grass was modelled against fertiliser 
+  concentration with a Gaussian family and weakly informative priors.
+- (equation and priors)
+- the Bayesian model included 3 chains, each of 5000 iterations, 
+  thinned to a rate of 5, and excluded the first 1000 iterations (warmup)
+- the model was found to be well mixed and converged (all Rhat <
+  1.05) on a stable posterior (see suppl.) and was validated via 
+  DHARMa (cite) residuals
+- all statistical models were performed in the R (4.2.0) Statistical
+  and Graphical Environment (#REF) via the _brms_ (#REF) package
+
+# Results
+
+- Grass yield was found to have a positive linear relationship with
+  fertiliser concentration (stats)
+- Every one unit increase in fertiliser concentration was found to be
+  associated with a 0.8 gram increase in grass yield
+- Doubling the fertiliser concentration from 100 to 200 (units) is
+  expected to increase the yield by x grams
 
 </div>
 

@@ -14,10 +14,11 @@ library(DHARMa)    #for residuals diagnostics
 library(performance) #for residual disagnostics
 library(see)        # to visualize residual diagnostics
 library(patchwork)  #for grids of plots
+library(gamm4)
 
 
 ## ----readData, results='markdown', eval=TRUE----------------------------------
-wq = read_csv('../data/aims.wq.csv', trim_ws=TRUE)
+wq = read_csv('../data/aims.wq1.csv', trim_ws=TRUE)
 glimpse(wq)
 
 
@@ -29,17 +30,17 @@ wq = wq %>% mutate(reef.alias=factor(reef.alias),
 
 
 ## ----EDA1a, results='markdown', eval=TRUE, hidden=TRUE------------------------
-ggplot(wq, aes(y=NOx, x=Date)) + geom_point()
+ggplot(wq, aes(y=DOC, x=Date)) + geom_point()
 
 
 ## ----EDA1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=15, fig.height=12----
-ggplot(wq, aes(y=NOx, x=Date)) +
+ggplot(wq, aes(y=DOC, x=Date)) +
     geom_point() +
     facet_wrap(~reef.alias)
 
 
 ## ----EDA1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=15, fig.height=12----
-ggplot(wq, aes(y=NOx, x=Date)) +
+ggplot(wq, aes(y=DOC, x=Date)) +
   geom_point() +
   geom_smooth() +
   scale_y_continuous(trans=scales::pseudo_log_trans()) +
@@ -53,23 +54,23 @@ wq=wq %>% mutate(Dt.num=decimal_date(Date))
 
 
 ## ----model1a, results='markdown', eval=TRUE, hidden=TRUE----------------------
-wq.pandora=wq %>% filter(reef.alias=='Pandora', !is.na(NOx))
-#wq.pandora=wq %>% filter(reef.alias=='Green', !is.na(NOx))
+wq.sub=wq %>% filter(reef.alias=='Pandora', !is.na(DOC))
+#wq.sub=wq %>% filter(reef.alias=='Green', !is.na(DOC))
 
-ggplot(wq.pandora, aes(y=NOx, x=Date)) + geom_point() +
+ggplot(wq.sub, aes(y=DOC, x=Date)) + geom_point() +
     geom_smooth() +
   scale_y_log10()
 
 
 ## ----model1b, results='markdown', eval=TRUE, hidden=TRUE----------------------
-wq.pandora=wq %>% filter(reef.alias=='Pandora', !is.na(NOx))
+wq.sub=wq %>% filter(reef.alias=='Pandora', !is.na(DOC))
 
 
 ## ----fitModel1a, results='markdown', eval=TRUE, hidden=TRUE-------------------
-wq.gam1 <- gam(NOx ~ s(Dt.num), data=wq.pandora, family='gaussian', method='REML')
-wq.gam2 <- gam(NOx ~ s(Dt.num), data=wq.pandora, family=gaussian(link='log'), method='REML')
-wq.gam3 <- gam(NOx ~ s(Dt.num), data=wq.pandora, family=Gamma(link='log'), method='REML')
-wq.gam4 <- gam(NOx ~ s(Dt.num), data=wq.pandora, family=tw(link='log'), method='REML')
+wq.gam1 <- gam(DOC ~ s(Dt.num), data=wq.sub, family='gaussian', method='REML')
+wq.gam2 <- gam(DOC ~ s(Dt.num), data=wq.sub, family=gaussian(link='log'), method='REML')
+wq.gam3 <- gam(DOC ~ s(Dt.num), data=wq.sub, family=Gamma(link='log'), method='REML')
+wq.gam4 <- gam(DOC ~ s(Dt.num), data=wq.sub, family=tw(link='log'), method='REML')
 library(MuMIn)
 AICc(wq.gam1, wq.gam2, wq.gam3, wq.gam4)
 
@@ -114,8 +115,8 @@ appraise(wq.gam4)
 
 
 ## ----modelValidation4b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4----
-#wq.resid <- simulateResiduals(wq.gam4,  plot=TRUE)
-#testTemporalAutocorrelation(wq.resid,  time=wq.gam4$model$Dt.num)
+wq.resid <- simulateResiduals(wq.gam4,  plot=TRUE)
+testTemporalAutocorrelation(wq.resid,  time=wq.gam4$model$Dt.num)
 
 
 ## ----partialPlots1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5----
@@ -135,7 +136,7 @@ plot(wq.gam2, pages=1,  shift=coef(wq.gam2)[1], resid=TRUE, trans=exp,  cex=4,  
 
 
 ## ----partialPlots3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5----
-draw(wq.gam3)
+wq.gam3 %>% draw(residuals = TRUE)
 
 
 ## ----partialPlots3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5----
@@ -143,7 +144,7 @@ plot(wq.gam3, pages=1,  shift=coef(wq.gam3)[1], resid=TRUE, trans=exp,  cex=4,  
 
 
 ## ----partialPlots4a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5----
-draw(wq.gam4)
+wq.gam4 %>% draw(residuals = TRUE)
 
 
 ## ----partialPlots4b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5----
@@ -183,8 +184,8 @@ tidy(wq.gam4)
 
 
 ## ----fitModel5a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5----
-wq.gam5 <- gam(NOx ~ s(Dt.num, by=Season),
-               data=wq.pandora,
+wq.gam5 <- gam(DOC ~ s(Dt.num, by=Season),
+               data=wq.sub,
                family=Gamma(link='log'), method='REML')
 
 
@@ -200,7 +201,7 @@ testTemporalAutocorrelation(wq.resid,  time=wq.gam5$model$Dt.num)
 
 
 ## ----partialPlots5a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4----
-draw(wq.gam5)
+wq.gam5 %>% draw(residuals = TRUE)
 
 
 ## ----partialPlots5b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4----
@@ -208,10 +209,10 @@ plot(wq.gam5, pages=1,  shift=coef(wq.gam5)[1], resid=TRUE, trans=exp,  cex=4,  
 
 
 ## ----fitModel6a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5----
-wq.gam6 <- gam(NOx ~ s(Dt.num)+
+wq.gam6 <- gam(DOC ~ s(Dt.num)+
                  s(Mnth,bs='cc',k=5,fx=F),
                knots=list(Mnth=seq(1,12,length=5)),
-               data=wq.pandora,
+               data=wq.sub,
                family=Gamma(link='log'), method='REML')
 
 
@@ -227,7 +228,7 @@ testTemporalAutocorrelation(wq.resid,  time=wq.gam5$model$Dt.num)
 
 
 ## ----partialPlots6a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4----
-draw(wq.gam6)
+wq.gam6 %>% draw(residuals = TRUE)
 
 
 ## ----partialPlots6b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4----
@@ -243,7 +244,7 @@ summary(wq.gam6)
 
 
 ## ----summaryFigure6a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4----
-wq.list = with(wq.pandora, list(Dt.num = seq(min(Dt.num), max(Dt.num), len=100)))
+wq.list = with(wq.sub, list(Dt.num = seq(min(Dt.num), max(Dt.num), len=100)))
 newdata = emmeans(wq.gam6, ~Dt.num, at=wq.list, type='response') %>% as.data.frame
 head(newdata)
 g1=ggplot(newdata, aes(y=response, x=date_decimal(Dt.num))) +
@@ -252,7 +253,7 @@ g1=ggplot(newdata, aes(y=response, x=date_decimal(Dt.num))) +
     scale_x_datetime('') +
     theme_bw()
 
-wq.list = with(wq.pandora, list(Mnth = seq(1, 12, len=100)))
+wq.list = with(wq.sub, list(Mnth = seq(1, 12, len=100)))
 newdata1 = emmeans(wq.gam6, ~Mnth, at=wq.list, type='response') %>% as.data.frame
 head(newdata1)
 g2=ggplot(newdata1, aes(y=response, x=Mnth)) +
@@ -275,7 +276,7 @@ ggplot(newdata, aes(y=response, x=date_decimal(Dt.num))) +
     scale_x_datetime('') +
     theme_bw() +
     geom_point(data=wq.presid, aes(y=Presid)) +
-    geom_point(data=wq.pandora, aes(y=NOx), color='red', alpha=0.5)
+    geom_point(data=wq.sub, aes(y=DOC), color='red', alpha=0.5)
 
 wq.presid=with(wq.gam6$model, data.frame(Dt.num=Dt.num, Mnth=mean(Mnth))) %>%
     mutate(Resid=exp(as.vector(predict(wq.gam6, newdata=., type='link')) + wq.gam6$residuals))
@@ -294,7 +295,7 @@ ggplot(newdata, aes(y=response, x=date_decimal(Dt.num))) +
 ##   group_by(reef.alias) %>%
 ##   mutate(Min=min(Dt.num)) %>%
 ##   ungroup() %>%
-##   filter(Min<2012) %>%
+##   filter(Min<2012, Region) %>%
 ##   droplevels
 ## 
 ## ## reef=wq %>%
@@ -304,22 +305,22 @@ ggplot(newdata, aes(y=response, x=date_decimal(Dt.num))) +
 ## ##   pull(reef.alias)
 ## ## reef
 ## ## wq2=wq %>% filter(reef.alias %in% reef) %>% droplevels
-## ggplot(wq.sub, aes(y=NOx,x=Dt.num)) +
+## ggplot(wq.sub, aes(y=DOC,x=Dt.num)) +
 ##     geom_point() +
 ##     facet_wrap(~reef.alias)
 ## 
 
 
 ## ----EDA2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=15, fig.height=12----
-ggplot(wq, aes(y=NOx,x=Dt.num)) +
+ggplot(wq.sub, aes(y=DOC,x=Dt.num)) +
     geom_point() +
     facet_wrap(~reef.alias, scales='free_y')
 ## Some reefs dont have the full time series
 
 
 ## ----fitModel7a, results='markdown', eval=TRUE,hidden=TRUE--------------------
-wq.gamm1 <- gamm(NOx ~ s(Dt.num), random=list(reef.alias=~1),
-                 data=wq, family=Gamma(link='log'), method='REML')
+wq.gamm1 <- gamm(DOC ~ s(Dt.num), random=list(reef.alias=~1),
+                 data=wq.sub, family=Gamma(link='log'), method='REML')
 
 
 ## ----validateModel7a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=5, fig.height=5----
@@ -340,8 +341,8 @@ plot(wq.gamm1$gam, pages=1,  shift=fixef(wq.gamm1$lme)[1], resid=FALSE, trans=ex
 
 
 ## ----fitModel8a, results='markdown', eval=TRUE,hidden=TRUE--------------------
-wq.gamm2 <- gamm4::gamm4(NOx ~ s(Dt.num),  random=~(1|reef.alias),
-                 data=wq, family=Gamma(link='log'), REML=TRUE)
+wq.gamm2 <- gamm4::gamm4(DOC ~ s(Dt.num),  random=~(1|reef.alias),
+                 data=wq.sub, family=Gamma(link='log'), REML=TRUE)
 
 
 ## ----validateModel8a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=5, fig.height=5----
@@ -362,8 +363,8 @@ plot(wq.gamm2$gam, pages=1,  shift=fixef(wq.gamm2$mer)[1], resid=FALSE, trans=ex
 
 
 ## ----fitModel9a, results='markdown', eval=TRUE,hidden=TRUE--------------------
-wq.gamm3 <- gam(NOx ~ s(Dt.num) + s(reef.alias,  bs='re'),
-                 data=wq, family=Gamma(link='log'), method='REML')
+wq.gamm3 <- gam(DOC ~ s(Dt.num) + s(reef.alias,  bs='re'),
+                 data=wq.sub, family=Gamma(link='log'), method='REML')
 
 
 ## ----validateModel9a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=5, fig.height=5----
@@ -384,8 +385,8 @@ plot(wq.gamm3, pages=1,  shift=coef(wq.gamm3)[1], resid=FALSE, trans=exp,  cex=4
 
 
 ## ----fitModel10a, results='markdown', eval=TRUE,hidden=TRUE-------------------
-wq.gamm3a <- gam(NOx ~ s(Dt.num, k=20) + s(reef.alias,  bs='re'),
-                 data=wq, family=Gamma(link='log'), method='REML')
+wq.gamm3a <- gam(DOC ~ s(Dt.num, k=20) + s(reef.alias,  bs='re'),
+                 data=wq.sub, family=Gamma(link='log'), method='REML')
 
 
 ## ----validateModel10a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=5, fig.height=5----
@@ -406,12 +407,12 @@ plot(wq.gamm3a, pages=1,  shift=coef(wq.gamm3)[1], resid=FALSE, trans=exp,  cex=
 
 
 ## ----fitModel11a, results='markdown', eval=TRUE,hidden=TRUE-------------------
-wq.gamm3b <- gam(NOx ~ s(Dt.num,  k=20)+
+wq.gamm3b <- gam(DOC ~ s(Dt.num,  k=20)+
                    s(Mnth,bs='cc',k=5) +
                    s(reef.alias, bs='re'),
                  knots=list(Mnth=seq(1,12,length=5)),
                  family=Gamma(link='log'),
-                 data=wq, method='REML')
+                 data=wq.sub, method='REML')
 
 
 ## ----validateModel11a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=5, fig.height=5----
@@ -432,19 +433,12 @@ plot(wq.gamm3b, pages=1,  shift=coef(wq.gamm3)[1], resid=FALSE, trans=exp,  cex=
 
 
 ## ----fitModel12a, results='markdown', eval=TRUE,hidden=TRUE-------------------
-## wq.gamm3c <- gam(NOx ~ s(Dt.num, k=20)+
-##                    s(Mnth,bs='cc',k=5) +
-##                    s(Region,  bs='re') +
-##                    s(reef.alias, bs='re'),
-##                  knots=list(Mnth=seq(1,12,length=5)),
-##                  family=Gamma(link='log'),
-##                 data=wq, method='REML')
-wq.gamm3c <- gam(NOx ~ s(Dt.num, by=Region, k=20)+
-                   s(Mnth,bs='cc', by=Region, k=5) +
+wq.gamm3c <- gam(DOC ~ s(Dt.num, by=Region, k=20)+
+                   s(Mnth,bs='cc', by=Region, k=6) +
                    s(reef.alias, bs='re'),
-                 knots=list(Mnth=seq(1,12,length=5)),
+                 knots=list(Mnth=seq(1,12,length=6)),
                  family=Gamma(link='log'),
-                data=wq, method='REML')
+                data=wq.sub, method='REML')
 
 
 ## ----validateModel12a, results='markdown', eval=TRUE,hidden=TRUE, fig.width=5, fig.height=5----
@@ -528,7 +522,7 @@ ggplot(newdata, aes(y=response, x=date_decimal(Dt.num))) +
   geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), fill='blue', alpha=0.3) +
   geom_line() +
   geom_point(data=wq.presid, aes(y=Partial.obs)) +
-  geom_point(data=wq,  aes(y=NOx, x=date_decimal(Dt.num)),  color='red') +
+  geom_point(data=wq,  aes(y=DOC, x=date_decimal(Dt.num)),  color='red') +
   scale_x_datetime('') +
   scale_y_continuous(breaks=seq(0,10,by=2), limits=c(0,10))+
   theme_bw() 

@@ -50,28 +50,33 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FAL
 Load the necessary libraries
 
 ```{r libraries, results='markdown', eval=TRUE}
-library(car)
+library(tidyverse)  #for data wrangling etc
 library(rstanarm)   #for fitting models in STAN
+library(cmdstanr)   #for cmdstan
 library(brms)       #for fitting models in STAN
+library(car)
+library(tidybayes)  #for more tidying outputs
+library(standist)   #for exploring distributions
 library(coda)       #for diagnostics
 library(bayesplot)  #for diagnostics
 library(ggmcmc)     #for MCMC diagnostics
 library(rstan)      #for interfacing with STAN
+library(HDInterval) #for HPD intervals
 library(emmeans)    #for marginal means etc
 library(DHARMa)     #for residual diagnostics
 library(broom)      #for tidying outputs
-library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
 library(broom.mixed)#for summarising models
 library(ggeffects)  #for partial effects plots
-library(tidyverse)  #for data wrangling etc
 library(patchwork)  #for multiple plots
 library(ggridges)   #for ridge plots 
+library(bayestestR) #for ROPE
+library(see)        #for some plots
 source("helperFunctions.R")
 ```
 
 # Scenario
-
+ 
 @Loyn-1987-1987 modelled the abundance of forest birds with six predictor
 variables (patch area, distance to nearest patch, distance to nearest
 larger patch, grazing intensity, altitude and years since the patch had
@@ -111,9 +116,11 @@ Model formula:
 $$
 y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
 log(\mu_i) = \boldsymbol{\beta} \bf{X_i}\\
-\beta_0 \sim{} \mathcal{N}(3,2)\\
-\beta_{1-9} \sim{} \mathcal{N}(0,2)\\
-\sigma \sim{} \mathcal{gamma}(2,1)\\
+\beta_0 \sim{} \mathcal{N}(3,0.5)\\
+\beta_{1-9} \sim{} \mathcal{N}(0,2.5)\\
+\sigma \sim{} \mathcal{Gamma}(2,1)\\
+OR\\
+\sigma \sim{} \mathcal{t}(3,0,2.5)
 $$
 
 where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the additive effects of
@@ -141,6 +148,20 @@ altitude on the abundance of forest birds.
 
 
 
+### ROPE
+Region of Practical Equivalence
+
+For standardised parameter (negligible effect)
+
+```{r ROP, results='markdown', eval=TRUE}
+0.1 * sd(log(loyn$ABUND))
+loyn.brm3 %>% bayestestR::rope_range()
+loyn.brm3 %>% bayestestR::rope(range = c(-0.09, 0.09))
+loyn.brm3 %>% bayestestR::rope(range = c(-0.09, 0.09)) %>%
+    plot(data = loyn.brm3)
+```
+
+
 # Further analyses {.tabset .tabset-faded}
 
 
@@ -148,6 +169,8 @@ altitude on the abundance of forest birds.
 ## Contrasts {.tabset .tabset-pills}
 
 ### brms
+
+Compare effect of grazing at different patch areas
 
 
 

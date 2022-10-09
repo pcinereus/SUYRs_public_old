@@ -50,6 +50,7 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FAL
 Load the necessary libraries
 
 ```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(tidyverse) #for data wrangling
 library(car)       #for regression diagnostics
 library(broom)     #for tidy output
 library(ggfortify) #for model diagnostics
@@ -59,7 +60,6 @@ library(effects)   #for partial effects plots
 library(emmeans)   #for estimating marginal means
 library(MASS)      #for glm.nb
 library(MuMIn)     #for AICc
-library(tidyverse) #for data wrangling
 library(brms)
 library(broom.mixed)
 library(tidybayes)
@@ -125,6 +125,9 @@ $\bf{Z}$ represents a cell means model matrix for the random intercepts associat
 
 
 # MCMC sampling diagnostics {.tabset .tabset-faded}
+
+
+# Model validation {.tabset .tabset-faded}
 
 
 # Partial effects plots {.tabset .tabset-faded}

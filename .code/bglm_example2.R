@@ -3,7 +3,9 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FAL
 
 
 ## ----libraries, results='markdown', eval=TRUE---------------------------------
+library(tidyverse)  #for data wrangling etc
 library(rstanarm)   #for fitting models in STAN
+library(cmdstanr)   #for cmdstan
 library(brms)       #for fitting models in STAN
 library(coda)       #for diagnostics
 library(bayesplot)  #for diagnostics
@@ -14,9 +16,10 @@ library(emmeans)    #for marginal means etc
 library(broom)      #for tidying outputs
 library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
-library(tidyverse)  #for data wrangling etc
 library(broom.mixed)#for summarising models
 library(ggeffects)  #for partial effects plots
+library(bayestestR) #for ROPE
+library(see)        #for some plots
 theme_set(theme_grey()) #put the default ggplot theme back
 source("helperFunctions.R")
 
@@ -83,6 +86,10 @@ posterior_vs_prior(polis.rstanarm3, color_by='vs', group_by=TRUE,
 
 ## ----modelFit1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
 ggemmeans(polis.rstanarm3,  ~RATIO) %>% plot(add.data=TRUE)
+ggemmeans(polis.rstanarm3, terms = "RATIO[0:63]") %>%
+    plot(add.data=TRUE,
+         residuals = TRUE,
+         jitter = FALSE)
 #OR
 polis.rstanarm3 %>% ggpredict(~RATIO) %>% plot(add.data=TRUE)
 
@@ -92,9 +99,10 @@ polis.brm <- brm(bf(PA|trials(1) ~ RATIO, family = binomial()),
                 data = polis,
                 iter = 5000,
                 warmup = 1000,
-                chains = 3,
+                chains = 3, cores = 3,
                 thin = 5,
-                refresh = 0)
+                refresh = 0,
+                backend = 'cmdstan')
 
 
 ## ----fitModel2b, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE, paged.print=FALSE,tidy.opts = list(width.cutoff = 80), echo=2----
@@ -112,9 +120,10 @@ polis.brm1 = brm(bf(PA|trials(1) ~ RATIO, family = binomial()),
                  sample_prior = 'only', 
                  iter = 5000,
                  warmup = 1000,
-                 chains = 3,
+                 chains = 3, cores = 3,
                  thin = 5,
-                 refresh = 0)
+                 refresh = 0,
+                 backend = 'cmdstan')
 
 
 ## ----fitModel2e, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
@@ -136,9 +145,10 @@ polis.brm2 = brm(bf(PA|trials(1) ~ RATIO, family = binomial()),
                  sample_prior = 'only', 
                  iter = 5000,
                  warmup = 1000,
-                 chains = 3,
+                 chains = 3, cores = 3,
                  thin = 5,
-                 refresh = 0)
+                 refresh = 0,
+                 backend = 'cmdstan')
 
 
 ## ----fitModel2i, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
@@ -147,7 +157,7 @@ ggemmeans(polis.brm2,  ~RATIO) %>%
 
 
 ## ----fitModel2j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-polis.brm3 <- polis.brm2 %>% update(sample_prior = 'yes', refresh = 0) 
+polis.brm3 <- polis.brm2 %>% update(sample_prior = 'yes', refresh = 0)  
 
 
 ## ----fitModel2j1, results='markdown', eval=TRUE, echo = FALSE, hidden=TRUE----
@@ -157,6 +167,10 @@ save(polis.brm3, file = '../ws/testing/polis.brm3.RData')
 ## ----fitModel2j2, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
 ggemmeans(polis.brm3,  ~RATIO) %>%
   plot(add.data = TRUE) 
+ggemmeans(polis.brm3,  terms = "RATIO[0:63]") %>%
+    plot(add.data = TRUE) 
+
+polis.brm3 %>% conditional_effects()
 
 
 ## ----posterior2k, results='markdown', eval=TRUE-------------------------------
@@ -399,7 +413,7 @@ pp_check(polis.rstanarm3, x=polis$RATIO, plotfun='ribbon')
 
 
 ## ----modelValidation4a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-preds <- posterior_predict(polis.rstanarm3,  nsamples=250,  summary=FALSE)
+preds <- posterior_predict(polis.rstanarm3,  ndraws=250,  summary=FALSE)
 polis.resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = polis$PA,
                             fittedPredictedResponse = apply(preds, 2, median),
@@ -412,7 +426,7 @@ available_ppc()
 
 
 ## ----modelValidation5b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-polis.brm3 %>% pp_check(type = 'dens_overlay', nsamples=100)
+polis.brm3 %>% pp_check(type = 'dens_overlay', ndraws=100)
 
 
 ## ----modelValidation5c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
@@ -437,7 +451,7 @@ polis.brm3 %>% pp_check(x = 'RATIO', type = 'ribbon')
 
 
 ## ----modelValidation6a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-preds <- polis.brm3 %>% posterior_predict(nsamples = 250,  summary = FALSE)
+preds <- polis.brm3 %>% posterior_predict(ndraws = 250,  summary = FALSE)
 polis.resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = polis$PA,
                             fittedPredictedResponse = apply(preds, 2, median),
@@ -509,6 +523,20 @@ summary(polis.rstanarm3)
 
 ## ----summariseModel1a1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5, echo=FALSE----
 polis.sum <- summary(polis.rstanarm3)
+
+
+## ----summariseModel1dd, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+polis.rstanarm3$stanfit %>%
+    summarise_draws(median,
+                    HDInterval::hdi,
+                    rhat, length, ess_bulk, ess_tail)
+
+
+## ----summariseModel1d2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+polis.rstanarm3$stanfit %>%
+    summarise_draws(median,
+                    ~HDInterval::hdi(.x, credMass = 0.9),
+                    rhat, length, ess_bulk, ess_tail)
 
 
 ## ----summariseModel1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
@@ -626,6 +654,20 @@ polis.brm3$fit %>% tidyMCMC(estimate.method = 'median',  conf.int = TRUE,  conf.
 polis.tidy <- polis.brm3$fit %>% tidyMCMC(estimate.method = 'median',  conf.int = TRUE,  conf.method = 'HPDinterval',  rhat = TRUE, ess = TRUE)
 
 
+## ----summariseModel2dd, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+polis.brm3 %>%
+    summarise_draws(median,
+                    HDInterval::hdi,
+                    rhat, length, ess_bulk, ess_tail)
+
+
+## ----summariseModel2d2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+polis.brm3 %>%
+    summarise_draws(median,
+                    ~HDInterval::hdi(.x, credMass = 0.9),
+                    rhat, length, ess_bulk, ess_tail)
+
+
 ## ----summariseModel2m, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 polis.brm3 %>% as_draws_df()
 ## summarised 
@@ -730,6 +772,20 @@ polis.brm3 %>%
                     ~ HDInterval::hdi(.x),
                     "rhat",
                     "ess_bulk")
+
+
+polis.brm3 %>%
+    tidy_draws() %>%
+    exp() %>%
+    summarise_draws(median,HDInterval::hdi, rhat, ess_bulk, ess_tail) %>%
+    filter(variable %in% c('b_Intercept', 'b_RATIO'))
+
+
+polis.brm3 %>%
+    tidy_draws() %>%
+    exp() %>%
+    dplyr::select(starts_with("b_")) %>% 
+    summarise_draws(median,HDInterval::hdi, rhat, ess_bulk, ess_tail) 
 
 
 ## ----summariseModel2f, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----

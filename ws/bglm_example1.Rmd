@@ -49,7 +49,9 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FAL
 Load the necessary libraries
 
 ```{r libraries, results='markdown', eval=TRUE}
+library(tidyverse)  #for data wrangling etc
 library(rstanarm)   #for fitting models in STAN
+library(cmdstanr)   #for cmdstan
 library(brms)       #for fitting models in STAN
 library(standist)   #for exploring distributions
 library(coda)       #for diagnostics
@@ -62,11 +64,12 @@ library(broom)      #for tidying outputs
 library(tidybayes)  #for more tidying outputs
 library(HDInterval) #for HPD intervals
 library(ggeffects)  #for partial plots
-library(tidyverse)  #for data wrangling etc
 library(broom.mixed)#for summarising models
 library(posterior)  #for posterior draws
 library(ggeffects)  #for partial effects plots
 library(patchwork)  #for multi-panel figures
+library(bayestestR) #for ROPE
+library(see)        #for some plots
 theme_set(theme_grey()) #put the default ggplot theme back
 source('helperFunctions.R')
 ```
@@ -118,15 +121,134 @@ y_i &\sim{} \mathcal{N}(\mu_i, \sigma^2)\\
 \mu_i &= \beta_0 + \beta_1 x_i\\
 \beta_0 &\sim{} \mathcal{N}(164,65)\\
 \beta_1 &\sim{} \mathcal{N}(0,1)\\
-\sigma &\sim{} \mathcal{cauchy}(0,2)\\
+\sigma &\sim{} \mathcal{cauchy}(0,65)\\
+OR\\
+\sigma &\sim{} \mathcal{t}(3,0,65)\\
 OR\\
 \sigma &\sim{} \mathcal{Exp}(0.016)\\
 OR\\
-\sigma &\sim{} \mathcal{gamma}(2,1)\\
+\sigma &\sim{} \mathcal{gamma}(2,0.05)\\
 \end{align}
 $$
 
 # Fit the model {.tabset .tabset-faded}
+
+Note, for routines that take more than a couple of seconds to perform
+(such as most Bayesian models), it is a good idea to cache the
+Rmarkdown chunks in which the routine is performed. That way, the
+routine will only be run the first time and any objects generated will
+be stored for future use. Thereafter, provided the code has not
+changed, the routine will not be re-run. Rather, `knitr` will just
+retrieve the cached objects and continue on.
+
+One of the most difficult aspects of performing Bayesian analyses is
+the specification of priors.  For instances where there are some
+previous knowledge available and a desire to incorporate those data,
+the difficulty is in how to ensure that the information is
+incorporated correctly.  However, for instances where there are no
+previous relevant information and so a desire to have the posteriors
+driven entirely by the new data, the difficulty is in how to define
+priors that are both vague enough (not bias results in their
+direction) and yet not so vague as to allow the MCMC sampler to drift
+off into unsupported regions (and thus get stuck and yield spurious
+estimates).
+
+For early implementations of MCMC sampling routines (such as
+Metropolis Hasting and Gibbs), it was fairly common to see very vague
+priors being defined.  For example, the priors on effects, were
+typically normal priors with mean of 0 and variance of `1e+06`
+(1,00,000).  These are very vague priors.  Yet for some samplers
+(e.g. NUTS), such vague priors can encourage poor behaviour of the
+sampler - particularly if the posterior is complex. It is now
+generally advised that priors should (where possible) be somewhat
+**weakly informative** and to some extent, represent the bounds of
+what are feasible and sensible estimates.
+
+The degree to which priors __influence__ an outcome (whether by having
+a pulling effect on the estimates or by encouraging the sampler to
+drift off into unsupported regions of the posterior) is dependent on:
+
+- the relative sparsity of the data - the larger the data, the less
+  weight the priors have and thus less influence they exert.
+- the complexity of the model (and thus posterior) - the more
+  parameters, the more sensitive the sampler is to the priors.
+
+The sampled posterior is the product of both the likelihood and the
+prior - all of which are multidimensional.  For most applications, it
+would be vertically impossible to define a sensible multidimensional
+prior.  Hence, our only option is to define priors on individual
+parameters (e.g. the intercept, slope(s), variance etc) and to hope
+that if they are individually sensible, they will remain collectively
+sensible.
+
+So having (hopefully) impressed upon the notion that priors are an
+important consideration, I will now attempt to synthesise some of the
+approaches that can be employed to arrive at weakly informative priors
+that have been gleaned from various sources.  Largely, this advice has
+come from the following resources:
+
+- https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
+- http://svmiller.com/blog/2021/02/thinking-about-your-priors-bayesian-analysis/
+
+I will outline some of the current main recommendations before
+summarising some approaches in a table.
+
+- weakly informative priors should contain enough information so as to
+  regularise (discourage unreasonable parameter estimates whilst
+  allowing all reasonable estimates).
+- for effects parameters on scaled data, an argument could be made for
+  a normal distribution with a standard deviation of 1
+  (e.g. `normal(0,1)`), although klsome prefer a t distribution with 3
+  degrees of freedom and standard deviation of 1
+  (e.g. `student_t(3,0,1)`) - apparently a flatter t is a more robust
+  prior than a normal as an uninformative prior...
+- for unscaled data, the above priors can be scaled by using the
+  standard deviation of the data as the prior standard deviation
+  (e.g. `student_t(3,0,sd(y))`, or `sudent_t(3,0,sd(y)/sd(x))`)
+- for priors of hierachical standard deviations, priors should
+  encourage shrinkage towards 0 (particularly if the number of groups
+  is small, since otherwise, the sampler will tend to be more
+  responsive to "noise").
+  
+| Family            | Parameter                            | brms                            | rstanarm                    |
+|-------------------|--------------------------------------|---------------------------------|-----------------------------|
+| Gaussian          | Intercept                            | `student_t(3,median(y),mad(y))` | `normal(mean(y),2.5*sd(y))` |
+|                   | 'Population effects' (slopes, betas) | flat, improper priors           | `normal(0,2.5*sd(y)/sd(x))` |
+|                   | Sigma                                | `student_t(3,0,mad(y))`         | `exponential(1/sd(y))`      |
+|                   | 'Group-level effects'                | `student_t(3,0,mad(y))`         | `decov(1,1,1,1)`            |
+|                   | Correlation on group-level effects   | `ljk_corr_cholesky(1)`          |                             |
+| Poisson           | Intercept                            | `student_t(3,median(y),mad(y))` | `normal(mean(y),2.5*sd(y))` |
+|                   | 'Population effects' (slopes, betas) | flat, improper priors           | `normal(0,2.5*sd(y)/sd(x))` |
+|                   | 'Group-level effects'                | `student_t(3,0,mad(y))`         | `decov(1,1,1,1)`            |
+|                   | Correlation on group-level effects   | `ljk_corr_cholesky(1)`          |                             |
+| Negative binomial | Intercept                            | `student_t(3,median(y),mad(y))` | `normal(mean(y),2.5*sd(y))` |
+|                   | 'Population effects' (slopes, betas) | flat, improper priors           | `normal(0,2.5*sd(y)/sd(x))` |
+|                   | Shape                                | `gamma(0.01, 0.01)`             | `exponential(1/sd(y))`      |
+|                   | 'Group-level effects'                | `student_t(3,0,mad(y))`         | `decov(1,1,1,1)`            |
+|                   | Correlation on group-level effects   | `ljk_corr_cholesky(1)`          |                             |
+
+Notes:
+
+`brms`
+
+https://github.com/paul-buerkner/brms/blob/c2b24475d727c8afd8bfc95947c18793b8ce2892/R/priors.R
+
+1. In the above, for non-Gaussian families, `y` is first transformed
+  according to the family link.  If the family link is `log`, then 0.1
+  is first added to 0 values.
+2. in `brms` the minimum standard deviation for the Intercept prior is
+   `2.5`
+3. in `brms` the minimum standard deviation for group-level priors is
+   `10`.
+
+`rstanarm`
+
+http://mc-stan.org/rstanarm/articles/priors.html
+
+1. in `rstanarm` priors on standard deviation and correlation
+   associated with group-level effects are packaged up into a single
+   prior (`decov` which is a decomposition of the variance and
+   covariance matrix).
 
 
 
@@ -336,8 +458,8 @@ different starting objects.
 
 
 
-
 # Summary figures {.tabset .tabset-faded}
+
 
 
 # References

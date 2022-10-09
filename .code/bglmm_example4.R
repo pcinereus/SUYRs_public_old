@@ -3,6 +3,7 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FAL
 
 
 ## ----libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE----
+library(tidyverse) #for data wrangling
 library(car)       #for regression diagnostics
 library(broom)     #for tidy output
 library(ggfortify) #for model diagnostics
@@ -12,7 +13,6 @@ library(effects)   #for partial effects plots
 library(emmeans)   #for estimating marginal means
 library(MASS)      #for glm.nb
 library(MuMIn)     #for AICc
-library(tidyverse) #for data wrangling
 library(brms)
 library(broom.mixed)
 library(tidybayes)
@@ -92,8 +92,8 @@ mckeon.rstanarm1 %>% emmeans(~SYMBIONT, type = 'link') %>%
 mckeon.rstanarm2 <- stan_glmer(PREDATION ~ SYMBIONT + (1|BLOCK),
                                 data = mckeon,
                                 family = binomial(link='logit'), 
-                                prior_intercept = normal(0, 2, autoscale = FALSE),
-                                prior = normal(0, 1, autoscale = FALSE),
+                                prior_intercept = normal(0, 2.5, autoscale = FALSE),
+                                prior = normal(0, 6, autoscale = FALSE),
                                 prior_covariance = decov(1, 1, 1, 1), 
                                 prior_PD = TRUE, 
                                 iter = 5000,
@@ -134,22 +134,19 @@ options(width=80)
 
 
 ## ----fitModel2h, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
-mckeon %>% 
-    group_by(SYMBIONT) %>%
-    summarise(mean(PREDATION),
-              var(PREDATION))
+2.5/model.matrix(~SYMBIONT, data=mckeon) %>% apply(2,sd)
 
-standist::visualize("normal(0,2)", xlim=c(0,200))
 standist::visualize("student_t(3, 0, 2.5)",
                     "gamma(2,0.5)",
-                    "cauchy(0,1)",
+                    "cauchy(0,2)",
                     xlim=c(-10,25))
 
 
 ## ----fitModel2h1, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE------
-priors <- prior(normal(0, 2), class = 'Intercept') +
-    prior(normal(0, 2), class = 'b') +
-    prior(cauchy(0,1), class = 'sd') 
+priors <-
+    prior(normal(0, 2.5), class = 'Intercept') +
+    prior(normal(0, 6), class = 'b') +
+    prior(cauchy(0,2), class = 'sd') 
 
 mckeon.form <- bf(PREDATION | trials(1) ~ SYMBIONT + (1|BLOCK),
                   family=binomial(link='logit'))
@@ -158,9 +155,10 @@ mckeon.brm2 <- brm(mckeon.form,
                   prior = priors,
                   sample_prior = 'only',
                   iter = 5000,
-                  warmup = 1000,
-                  chains = 3,
+                  warmup = 2500,
+                  chains = 3, cores = 3,
                   thin = 5,
+                  control = list(adapt_delta = 0.99),
                   refresh = 0
                   )
 
@@ -169,6 +167,14 @@ mckeon.brm2 <- brm(mckeon.form,
 mckeon.brm2 %>%
     ggpredict(~SYMBIONT) %>%
     plot(add.data = TRUE)
+
+mckeon.brm2 %>%
+    ggemmeans(~SYMBIONT) %>%
+    plot(add.data = TRUE)
+
+mckeon.brm2 %>%
+    conditional_effects() %>%
+    plot(points = TRUE)
 
 
 ## ----fitModel1i2, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
@@ -193,6 +199,15 @@ save(mckeon.brm3, file = '../ws/testing/mckeon.brm3')
 mckeon.brm3 %>%
     ggpredict(~SYMBIONT) %>%
     plot(add.data = TRUE)
+
+mckeon.brm3 %>%
+    ggemmeans(~SYMBIONT) %>%
+    plot(add.data = TRUE)
+
+mckeon.brm3 %>%
+    conditional_effects() %>%
+    plot(points = TRUE)
+
 mckeon.brm3 %>% emmeans(~SYMBIONT, type = 'link') %>%
     as.data.frame() %>%
     ggplot(aes(y = emmean, x = SYMBIONT)) +
@@ -214,9 +229,10 @@ mckeon.brm3 %>% SUYR_prior_and_posterior()
 
 
 ## ----fitModel2h3, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE------
-priors <- prior(normal(0, 2), class = 'Intercept') +
-    prior(normal(0, 2), class = 'b') +
-    prior(cauchy(0,1), class = 'sd') +
+priors <-
+    prior(normal(0, 2.5), class = 'Intercept') +
+    prior(normal(0, 6), class = 'b') +
+    prior(cauchy(0,2), class = 'sd') +
     prior(lkj_corr_cholesky(1), class = 'L')
 
 mckeon.form <- bf(PREDATION | trials(1) ~ SYMBIONT + (SYMBIONT|BLOCK),
@@ -226,11 +242,12 @@ mckeon.brm4 <- brm(mckeon.form,
                   prior = priors,
                   sample_prior = 'yes',
                   iter = 5000,
-                  warmup = 1000,
-                  chains = 3,
+                  warmup = 2500,
+                  chains = 3, cores = 3,
                   thin = 5,
                   refresh = 0,
-                  control = list(adapt_delta = 0.99)
+                  control = list(adapt_delta = 0.99, max_treedepth = 10),
+                  backend = 'cmdstan'
                   )
 
 save(mckeon.brm4, file = '../ws/testing/mckeon.brm4')

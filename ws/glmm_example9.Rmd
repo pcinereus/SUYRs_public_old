@@ -74,6 +74,8 @@ library(ordinal)    #for ordinal models
 
 # Read in the data
 
+2016 data only
+
 ```{r readData, results='markdown', eval=TRUE}
 hughes = read_csv('../data/hughes.csv', trim_ws=TRUE)
 glimpse(hughes)

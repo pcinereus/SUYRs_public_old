@@ -139,7 +139,8 @@ SUYR_prior_and_posterior <- function(mod) {
         as_draws_df() %>%
         dplyr::select(starts_with('b_'),
                       -contains('Intercept')) %>%
-        as.matrix()
+        as.matrix() %>%
+        suppressWarnings()
     
     scal <- as.vector(Xmat %*% t(b))
     
@@ -148,7 +149,7 @@ SUYR_prior_and_posterior <- function(mod) {
                                         data = dat,
                                         pars = variables(mod))
     brms_names <- sapply(brms_names, function(x) str_remove(x$fnames, "b_"))
-    priors <- mod %>% get_variables() %>% str_subset("^prior_.*") 
+    priors <- mod %>% get_variables() %>% str_subset("^prior_.*") %>% str_subset("lprior", negate = TRUE) 
     pars <- mod %>% get_variables() %>%
         str_subset(paste0("^b_(Intercept|",paste0(brms_names,collapse="|"),")"))
     
@@ -164,7 +165,7 @@ SUYR_prior_and_posterior <- function(mod) {
     variables(mod)
 
     vars <- variables(mod)
-    priors <- vars %>% str_subset("prior")
+    priors <- vars %>% str_subset("prior") %>% str_subset('lprior', negate = TRUE)
     all.pars <- priors %>% str_remove("prior_")
     fixed.pars <- vars %>% str_subset("^b_")
     other.pars <- all.pars %>% str_subset("^Intercept$|^b$", negate = TRUE)
@@ -188,7 +189,8 @@ SUYR_prior_and_posterior <- function(mod) {
                ##                     str_remove(Parameter, "__.*"),
                ##                    Parameter),
                Class = ifelse(Parameter %in% brms_names, 'b', Parameter),
-               Class = ifelse(Type == 'Posterior', str_remove(Class, "__.*"), Class))
+               Class = ifelse(Type == 'Posterior', str_remove(Class, "__.*"), Class)) %>%
+        suppressWarnings()
 
     return(
         ggplot(data = NULL, aes(x=Type,  y=value)) +

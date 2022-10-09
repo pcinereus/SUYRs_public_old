@@ -50,7 +50,9 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
 Load the necessary libraries
 
 ```{r libraries, results='markdown', eval=TRUE}
+library(tidyverse)  #for data wrangling etc
 library(rstanarm)   #for fitting models in STAN
+library(cmdstanr)   #for cmdstan
 library(brms)       #for fitting models in STAN
 library(standist)   #for exploring distributions
 library(coda)       #for diagnostics
@@ -63,11 +65,12 @@ library(broom)      #for tidying outputs
 library(tidybayes)  #for more tidying outputs
 library(HDInterval) #for HPD intervals
 library(ggeffects)  #for partial plots
-library(tidyverse)  #for data wrangling etc
 library(broom.mixed)#for summarising models
 library(posterior)  #for posterior draws
 library(ggeffects)  #for partial effects plots
 library(patchwork)  #for multi-panel figures
+library(bayestestR) #for ROPE
+library(see)        #for some plots
 theme_set(theme_grey()) #put the default ggplot theme back
 source('helperFunctions.R')
 ```
@@ -113,12 +116,14 @@ $$
 \begin{align}
 y_i &\sim{} \mathcal{NB}(\lambda_i, \theta)\\
 ln(\lambda_i) &= \beta_0 + \beta_1 ln(x_i)\\
-\beta_0 & \sim\mathcal{N}(0,5)\\
-\beta_1 & \sim\mathcal{N}(0,2)\\
-\theta &\sim{} \mathcal{Exp}(1)
+\beta_0 & \sim\mathcal{N}(6,1.5)\\
+\beta_1 & \sim\mathcal{N}(0,1)\\
+\theta &\sim{} \mathcal{Exp}(1)\\
+OR\\
+\theta &\sim{} \mathcal{\Gamma}(2,1)\\
 \end{align}
 $$
-
+ 
 # Fit the model {.tabset .tabset-faded}
 
 

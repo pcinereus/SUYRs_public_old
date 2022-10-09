@@ -54,15 +54,40 @@ hughes = hughes %>%
            HABITAT = factor(HABITAT),
            SECTOR=factor(SECTOR, levels=c('North','Central','South')),
            REEF=factor(REEF))
-hughes.colors = c('#FFFFFF', rev(heat.colors(length(levels(hughes$oSCORE))))[-1])
+## hughes.colors = c('#FFFFFF', rev(heat.colors(length(levels(hughes$oSCORE))))[-1])
 
 
 ## ----EDA2, results='markdown', eval=TRUE, fig.width=10, fig.height=10---------
-hughes.sum <- hughes %>%
-    count(SECTOR,HABITAT,oSCORE) %>%
+# Scatterplot
+hughes %>%
+    ggplot(aes(y = oSCORE, x = HABITAT)) +
+    geom_point(position = position_jitter()) +
+    facet_wrap(~SECTOR)
+# Line plot - too messy to make much of this...
+hughes %>%
+    group_by(SECTOR, REEF, HABITAT) %>%
+    summarise(SCORE = mean(SCORE)) %>%
+    ungroup() %>%
+    ggplot(aes(y = SCORE, x = as.numeric(HABITAT), group = REEF)) +
+    geom_blank(aes(x = HABITAT)) +
+    geom_line() +
+    facet_grid(~SECTOR)
+
+
+hughes %>%
+    group_by(SECTOR, HABITAT, oSCORE) %>%
+    summarise(n = n()) %>%
+    ungroup() %>%
     group_by(SECTOR, HABITAT) %>%
-    mutate(prop=prop.table(n),
-           oSCORE=factor(oSCORE, levels=rev(levels(oSCORE))))
+    mutate(prop = n/sum(n)) %>%
+    mutate(oSCORE = factor(oSCORE, levels = rev(levels(oSCORE)))) ->
+    hughes.sum
+    
+## hughes.sum <- hughes %>%
+##     count(SECTOR,HABITAT,oSCORE) %>%
+##     group_by(SECTOR, HABITAT) %>%
+##     mutate(prop=prop.table(n),
+##            oSCORE=factor(oSCORE, levels=rev(levels(oSCORE))))
 
 hughes.sum %>% head
 
@@ -77,32 +102,51 @@ ggplot(data=hughes.sum, aes(y=prop, x=HABITAT)) +
 
 
 ## ----mod1Fit, results='markdown', eval=FALSE, cache=TRUE, results='hide'------
-## 
+## library(ordinal)
 ## hughes.clmm=ordinal::clmm(oSCORE ~ HABITAT*SECTOR+(1|REEF), data=hughes)
+## hughes.clmm=clmm(oSCORE ~ HABITAT*SECTOR+(1|REEF), data=hughes)
+## hughes.clmm1=ordinal::clmm(oSCORE ~ HABITAT*SECTOR+(HABITAT|REEF), data=hughes)
+## AIC(hughes.clmm, hughes.clmm1)
 ## allEffects(hughes.clmm) %>% plot
-## plot_model(hughes.clmm, type='eff', terms=c('HABITAT','SECTOR'))
-## plot_model(hughes.clmm, type='eff', terms=c('SECTOR','HABITAT'))
-## ggpredict(hughes.clmm) %>% plot
+## allEffects(hughes.clmm1) %>% plot
+## ## plot_model(hughes.clmm, type='eff', terms=c('HABITAT','SECTOR'))
+## ## plot_model(hughes.clmm, type='eff', terms=c('SECTOR','HABITAT'))
+## ## ggpredict(hughes.clmm) %>% plot
+## hughes.clmm1 %>% ggpredict(c('HABITAT', 'SECTOR')) %>% plot
+## hughes.clmm1 %>% ggemmeans(~HABITAT|SECTOR) %>% plot
 ## 
 ## ## predict(hughes.clmm)
 ## ## model=hughes.clmm
 ## ## coefs <- c(model$beta, unlist(model$ST))
-## 
+## #autoplot(hughes.clmm1, what='qq')
 ## ## simulateResiduals(hughes.clmm, plot=TRUE)
 ## ## hughes.clmm=ordinal::clmm(oScore ~ Habitat*fYear*SectorThree+(1|ReefID), data=hughes)
 ## summary(hughes.clmm)
+## summary(hughes.clmm1)
+## ## Habitat F is associated with a lower prob of higher bleaching - but not significant
+## ## Habitat L is associated with a lower prob of higher bleaching (In the North)
+## exp(-1.655)
+## ## Habitat U is associated with higher prob of higher bleaching (in north)
+## exp(0.99968)
+## ## Central is associated with lower prob of higher bleaching (in habitat c)
+## exp(-2.29)
+## ## South is associated with a lower prob of higher bleaching
+## exp(-7.51)
+## # Significant interactions due to F:Central (Lower) and F:Southern (lower)
 ## 
 ## exp(-9.1435)
 ## exp(-0.7224)
 ## exp(-0.3714)
 ## 
 ## emmeans(hughes.clmm, ~oSCORE|HABITAT+SECTOR, mode='prob')
+## emmeans(hughes.clmm1, ~oSCORE|HABITAT+SECTOR, mode='prob')
 ## emmeans(hughes.clmm, ~HABITAT|SECTOR, mode='mean.class')
-## emmeans(hughes.clmm, ~HABITAT|SECTOR, mode='mean.class')
+## emmeans(hughes.clmm1, ~HABITAT|SECTOR, mode='mean.class')
 ## emmeans(hughes.clmm, ~HABITAT|SECTOR, mode='mean.class') %>% pairs()
-## emmeans(hughes.clmm, pairwise~Habitat, mode='mean.class')
+## emmeans(hughes.clmm1, ~HABITAT|SECTOR, mode='mean.class') %>% pairs()
 ## 
-## newdata = emmeans(hughes.clmm, ~ HABITAT|SECTOR, mode='mean.class') %>% as.data.frame %>%
+## ## newdata = emmeans(hughes.clmm, ~ HABITAT|SECTOR, mode='mean.class') %>% as.data.frame %>%
+## newdata = emmeans(hughes.clmm1, ~ HABITAT|SECTOR, mode='mean.class') %>% as.data.frame %>%
 ##     mutate(across(c(mean.class, asymp.LCL, asymp.UCL), function(x) x-1))
 ## newdata
 ## ScoreBoundaries = data.frame(Score=factor(0:4), ymin=c(0:4), ymax=c(1:5))
@@ -120,7 +164,8 @@ ggplot(data=hughes.sum, aes(y=prop, x=HABITAT)) +
 ## 
 ## 
 ## ## Pairwise for habitat
-## newdata = emmeans(hughes.clmm, ~HABITAT|SECTOR, mode='mean.class') %>%
+## ## newdata = emmeans(hughes.clmm, ~HABITAT|SECTOR, mode='mean.class') %>%
+## newdata = emmeans(hughes.clmm1, ~HABITAT|SECTOR, mode='mean.class') %>%
 ##     pairs() %>% confint() %>% as.data.frame()
 ## 
 ## ggplot(newdata) +
@@ -134,16 +179,16 @@ ggplot(data=hughes.sum, aes(y=prop, x=HABITAT)) +
 ## 
 ## ## Pairwise for year
 ## 
-## newdata = emmeans(hughes.clmm, pairwise~ fYear|Habitat+SectorThree, mode='mean.class')$contrasts %>%
-##                                                                                   confint %>% as.data.frame
-## ggplot(newdata) +
-##     geom_hline(yintercept=0) +
-##     geom_pointrange(aes(y=estimate, x=Habitat, ymin=asymp.LCL, ymax=asymp.UCL, color=SectorThree),
-##                     position=position_dodge(width=0.5)) +
-##     facet_grid(~SectorThree) +
-##     coord_flip() +
-##     scale_y_continuous('Effect size')+
-##     theme_bw()
+## ## newdata = emmeans(hughes.clmm, pairwise~ fYear|Habitat+SectorThree, mode='mean.class')$contrasts %>%
+## ##                                                                                   confint %>% as.data.frame
+## ## ggplot(newdata) +
+## ##     geom_hline(yintercept=0) +
+## ##     geom_pointrange(aes(y=estimate, x=Habitat, ymin=asymp.LCL, ymax=asymp.UCL, color=SectorThree),
+## ##                     position=position_dodge(width=0.5)) +
+## ##     facet_grid(~SectorThree) +
+## ##     coord_flip() +
+## ##     scale_y_continuous('Effect size')+
+## ##     theme_bw()
 ## 
 
 
