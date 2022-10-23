@@ -3,8 +3,13 @@ knitr::opts_chunk$set(echo = TRUE)
 
 
 ## ----libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE----
+library(tidyverse)  #for data wrangling etc
 library(rstanarm)   #for fitting models in STAN
+library(cmdstanr)   #for cmdstan
 library(brms)       #for fitting models in STAN
+library(standist)   #for exploring distributions
+library(HDInterval) #for HPD intervals
+library(posterior)  #for posterior draws
 library(coda)       #for diagnostics
 library(bayesplot)  #for diagnostics
 library(ggmcmc)     #for MCMC diagnostics
@@ -15,9 +20,10 @@ library(DHARMa)     #for residual diagnostics
 library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
 library(broom.mixed)#for tidying MCMC outputs
-library(tidyverse)  #for data wrangling etc
 library(patchwork)  #for multiple plots
 library(ggridges)   #for ridge plots 
+library(bayestestR) #for ROPE
+library(see)        #for some plots
 source('helperFunctions.R')
 
 
@@ -54,14 +60,14 @@ ggplot(norin, aes(y=CHANGE, x=MASS, color=TRIAL)) +
 
 
 ## ----fitModel1a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-norin.rstanarm <- stan_glmer(CHANGE ~  (1|FISHID)+TRIAL*SMR_contr+MASS,
-                               data = norin,
-                               family = gaussian(), 
-                               iter = 5000,
-                               warmup = 2000,
-                               chains = 3,
-                               thin = 5,
-                               refresh = 0)
+norin.rstanarm <- stan_glmer(CHANGE ~  (1|FISHID)+TRIAL*scale(SMR_contr, scale = FALSE)+scale(MASS, scale = FALSE),
+                             data = norin,
+                             family = gaussian(), 
+                             iter = 5000,
+                             warmup = 2000,
+                             chains = 3,
+                             thin = 5,
+                             refresh = 0) 
 
 
 ## ----fitModel1b, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
@@ -73,7 +79,7 @@ norin.rstanarm %>% prior_summary()
 
 
 ## ----fitModel1d, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
-2.5*sd(norin$CHANGE)/apply(model.matrix(~TRIAL*SMR_contr+MASS, norin)[, -1], 2, sd)
+2.5*sd(norin$CHANGE)/apply(model.matrix(~TRIAL*SMR_contr+MASS, norin), 2, sd)
 
 
 ## ----fitModel1e, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
@@ -95,7 +101,7 @@ norin.rstanarm1 %>%
 
 
 ## ----fitModel1h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-norin.rstanarm2 <- stan_glmer(CHANGE ~  (1|FISHID)+TRIAL*scale(SMR_contr)+scale(MASS),
+norin.rstanarm2 <- stan_glmer(CHANGE ~  (1|FISHID)+TRIAL*scale(SMR_contr, scale = FALSE)+offset(MASS),
                                 data = norin,
                                 family = gaussian(), 
                                 prior_intercept = normal(17, 35, autoscale = FALSE),
@@ -108,7 +114,7 @@ norin.rstanarm2 <- stan_glmer(CHANGE ~  (1|FISHID)+TRIAL*scale(SMR_contr)+scale(
                                 chains = 3,
                                 thin = 5,
                                 refresh = 0
-                                )
+                                )  
 
 
 ## ----fitModel1i, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
@@ -119,6 +125,30 @@ norin.rstanarm2 %>%
 
 ## ----fitModel1j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE, dependson='fitModel1h'----
 norin.rstanarm3 <- update(norin.rstanarm2,  prior_PD=FALSE)
+
+
+## ----fitModel1j2, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE, dependson='fitModel1h'----
+norin.rstanarm4 <- stan_glmer(CHANGE ~  (TRIAL|FISHID)+TRIAL*SMR_contr + offset(MASS),
+                                data = norin,
+                                family = gaussian(), 
+                                prior_intercept = normal(17, 35, autoscale = FALSE),
+                                prior = normal(0, 70, autoscale = FALSE),
+                                prior_aux=rstanarm::exponential(0.03, autoscale = FALSE),
+                                prior_covariance = decov(1, 1, 1, 1), 
+                                iter = 5000,
+                                warmup = 1000,
+                                chains = 3,
+                                thin = 5,
+                                refresh = 0
+                                )  
+preds <- norin.rstanarm4 %>% posterior_predict(ndraws = 250,  summary = FALSE)
+norin.resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = norin$CHANGE,
+                            fittedPredictedResponse = apply(preds, 2, median),
+                            integerResponse = FALSE)
+plot(norin.resids, quantreg = FALSE)
+
+## Clearly an issue here!
 
 
 ## ----modelFit1k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8----
@@ -139,19 +169,20 @@ norin.rstanarm3 %>%
 
 
 ## ----fitModel2a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE, paged.print=FALSE, tidy.opts = list(width.cutoff = 80), echo=c(-4,-6)----
-norin.form <- bf(CHANGE ~  (1|FISHID)+TRIAL*SMR_contr+MASS,
+norin.form <- bf(CHANGE ~  (1|FISHID)+TRIAL*SMR_contr+offset(MASS),
                    family = gaussian() 
                    )
 options(width=100)
 norin.form %>% get_prior(data=norin)
 options(width=80)
 norin.brm <- brm(norin.form,
-                  data=norin,
-                  iter = 5000,
-                  warmup = 1000,
-                  chains = 3,
-                  thin = 5,
-                  refresh = 0)
+                 data=norin,
+                 iter = 5000,
+                 warmup = 1000,
+                 chains = 3, cores = 3,
+                 thin = 5,
+                 refresh = 0,
+                 backend = 'cmdstanr')
 
 
 ## ----fitModel2h, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE, fig.width = 10, fig.height = 7----
@@ -171,6 +202,8 @@ sd(norin$CHANGE)/apply(model.matrix(~TRIAL*SMR_contr+MASS, norin)[, -1], 2, sd)
 standist::visualize("normal(16,35)", xlim=c(-10,100))
 standist::visualize("normal(0, 70)", "normal(0, 54)", xlim=c(-200,200))
 standist::visualize("gamma(2, 1)", "gamma(35, 1)",
+                    "student_t(3,0, 34)",
+                    "cauchy(0, 5.8)",
                     xlim=c(-10,100))
 
 
@@ -181,8 +214,9 @@ priors <- prior(normal(16, 35), class = 'Intercept') +
     prior(normal(0, 54), class = 'b', coef = 'SMR_contr') +
     prior(normal(0, 4), class = 'b', coef = 'MASS') +
     prior(normal(0, 13), class = 'b') +
-    prior(gamma(35, 1), class = 'sigma') +
-    prior(cauchy(0, 2.5), class = 'sd') 
+    prior(student_t(3,0,34), class = 'sigma') +
+    ## prior(gamma(35, 1), class = 'sigma') +
+    prior(cauchy(0, 5.8), class = 'sd') 
 norin.form <- bf(CHANGE ~ (1|FISHID) + TRIAL*SMR_contr + MASS,
                      family = gaussian()
                    )
@@ -192,9 +226,10 @@ norin.brm2 <- brm(norin.form,
                   sample_prior = 'only',
                   iter = 5000,
                   warmup = 1000,
-                  chains = 3,
+                  chains = 3, cores = 3,
                   thin = 5,
-                  refresh = 0
+                  refresh = 0,
+                  backend = "cmdstanr"
                   )
 
 
@@ -206,9 +241,10 @@ norin.brm2 %>%
 
 ## ----fitModel2h1b, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-----
 norin.brm3 <- update(norin.brm2,  
-                       sample_prior = 'yes',
-                       control = list(adapt_delta = 0.99),
-                       refresh = 0)
+                     sample_prior = 'yes',
+                     control = list(adapt_delta = 0.99),
+                     refresh = 0,
+                     cores = 3)  
 save(norin.brm3, file = '../ws/testing/norin.brm3')
 
 
@@ -225,7 +261,7 @@ norin.brm3 %>% hypothesis('SMR_contr=0') %>% plot
 
 
 ## ----posterior2h2a, results='markdown', eval=TRUE, fig.width = 7, fig.height = 5----
-norin.brm3 %>% SUYR_prior_and_posterior()
+## norin.brm3 %>% SUYR_prior_and_posterior()
 
 
 ## ----fitModel2h3, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE------
@@ -234,23 +270,25 @@ priors <- prior(normal(16, 35), class = 'Intercept') +
     prior(normal(0, 70), class = 'b', coef = 'TRIALLowSalinity') +
     prior(normal(0, 54), class = 'b', coef = 'SMR_contr') +
     prior(normal(0, 4), class = 'b', coef = 'MASS') +
-    prior(normal(0, 13), class = 'b') +
-    prior(gamma(35, 1), class = 'sigma') +
-    prior(cauchy(0, 2.5), class = 'sd') +
-    prior(lkj_corr_cholesky(1), class = 'L')
+    ## prior(normal(0, 70), class = 'b') +
+    prior(student_t(3,0,34), class = 'sigma') +
+    prior(cauchy(0, 5.8), class = 'sd') +
+    prior(lkj_corr_cholesky(1), class = 'cor')
 norin.form <- bf(CHANGE ~ (TRIAL|FISHID) + TRIAL*SMR_contr + MASS,
-                     family = gaussian()
-                   )
+                 ## sigma ~ TRIAL*SMR_contr + offset(MASS) + (1|FISHID),
+                 family = gaussian()
+                 )
 norin.brm4 <-  brm(norin.form, 
                   data = norin,
                   prior = priors,
                   sample_prior = 'yes',
                   iter = 5000,
                   warmup = 1000,
-                  chains = 3,
+                  chains = 3, cores = 3,
                   thin = 5,
                   refresh = 0,
-                  control = list(adapt_delta=0.99)
+                  control = list(adapt_delta=0.99),
+                  backend = "cmdstanr"
                   )
 save(norin.brm4, file = '../ws/testing/norin.brm4')
 
@@ -262,7 +300,7 @@ norin.brm4 %>% hypothesis('SMR_contr=0') %>% plot
 
 
 ## ----posterior2k1, results='markdown', eval=TRUE, fig.width = 7, fig.height = 5----
-norin.brm4 %>% SUYR_prior_and_posterior()
+## norin.brm4 %>% SUYR_prior_and_posterior()
 
 
 ## ----posterior2k2, results='markdown', eval=TRUE, fig.width=10, fig.height=4----
@@ -274,7 +312,7 @@ norin.brm4 %>%
   mutate(Type = ifelse(str_detect(key, 'prior'), 'Prior', 'Posterior'),
          Class = case_when(
              str_detect(key, '(^b|^prior).*Intercept$') ~ 'Intercept',
-             str_detect(key, 'b_TRIAL.*|prior_b_TRIAL.*') & str_detect(key, '.*\\:.*') ~ 'TRIAL',
+             str_detect(key, 'b_TRIAL.*|prior_b_TRIAL.*') & !str_detect(key, '.*\\:.*') ~ 'TRIAL',
              str_detect(key, 'b_SMR_contr|prior_b_SMR_contr') ~ 'SMR',
              str_detect(key, 'b_MASS|prior_b_MASS') ~ 'MASS',
              str_detect(key, '.*\\:.*|prior_b_.*\\:.*') ~ 'Interaction',
@@ -289,7 +327,7 @@ norin.brm4 %>%
 
 
 ## ----fitModel2h3a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-----
-(l.1 <- norin.brm3 %>% loo())
+(l.1 <- norin.brm3 %>% loo()) 
 (l.2 <- norin.brm4 %>% loo())
 loo_compare(l.1, l.2)
 
@@ -401,6 +439,7 @@ norin.resids <- createDHARMa(simulatedResponse = t(preds),
                             fittedPredictedResponse = apply(preds, 2, median),
                             integerResponse = FALSE)
 plot(norin.resids, quantreg = FALSE)
+norin.resids %>% testDispersion()
 
 
 ## ----partialPlot2d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
@@ -430,24 +469,48 @@ norin.brm4 %>% summary()
 norin.sum <- summary(norin.brm4)
 
 
+## ----summariseModel2i2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+norin.brm4 %>%
+  summarise_draws(
+    median,
+    ~ HDInterval::hdi(.x),
+    rhat,
+    ess_bulk,
+    ess_tail
+  )
+
+## or if you want to exclude some parameters
+norin.brm4 %>%
+  summarise_draws(
+    median,
+    ~ HDInterval::hdi(.x),
+    rhat,
+    ess_bulk,
+    ess_tail
+  ) %>%
+  filter(str_detect(variable, 'prior|^r_|^lp__', negate = TRUE)) 
+
+
 ## ----summariseModel2i, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 norin.brm4 %>% as_draws_df()
 norin.brm4 %>%
   as_draws_df() %>%
   summarise_draws(
-    "median",
+    median,
     ~ HDInterval::hdi(.x),
-    "rhat",
-    "ess_bulk"
+    rhat,
+    ess_bulk,
+    ess_tail
   )
 ## or if you want to exclude some parameters
 norin.brm4 %>%
   as_draws_df() %>%
   summarise_draws(
-    "median",
+    median,
     ~ HDInterval::hdi(.x),
-    "rhat",
-    "ess_bulk"
+    rhat,
+    ess_bulk,
+    ess_tail
   ) %>%
   filter(str_detect(variable, 'prior|^r_|^lp__', negate = TRUE)) 
 
@@ -571,6 +634,93 @@ norin.brm4 %>%
 norin.brm4 %>%
     bayes_R2(re.form = ~(TRIAL|FISHID), summary=FALSE) %>%
     median_hdci
+
+
+## ----summariseModel2k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+0.1 * sd(norin$CHANGE)
+norin.brm4 %>% rope(range = c(-3.38, 3.38))
+rope(norin.brm4, range = c(-3.38, 3.38)) %>% plot()
+
+
+
+## ----posteriors1a, results='markdown', eval=TRUE, echo=1,hidden=TRUE----------
+norin.brm4 %>% emtrends(~TRIAL, var='SMR_contr') %>% pairs()
+norin.emt <- norin.brm4 %>% emtrends(~TRIAL, var='SMR_contr') %>% pairs() %>% as.data.frame
+
+
+## ----posteriors1b, results='markdown', eval=TRUE, hidden=TRUE-----------------
+norin.grid <- with(norin,  list(SMR_contr=Hmisc::smean.sdl(SMR_contr)))
+norin.grid
+norin.brm4 %>% emmeans(~TRIAL|SMR_contr,  at=norin.grid) %>% pairs()
+
+norin.brm4 %>%
+    emmeans(~TRIAL|SMR_contr,  at=norin.grid) %>%
+    pairs() %>%
+    gather_emmeans_draws() %>%
+    median_hdci()
+norin.brm4 %>%
+    emmeans(~TRIAL|SMR_contr,  at=norin.grid) %>%
+    pairs() %>%
+    tidy_draws() %>%
+    summarise_draws(median)
+
+
+## ----posteriors1b2, results='markdown', eval=TRUE, hidden=TRUE----------------
+norin.em <- norin.brm4 %>%
+    emmeans(~TRIAL|SMR_contr, at=norin.grid) %>%
+    pairs() %>% 
+    gather_emmeans_draws() %>%
+    mutate(Fit=.value)
+norin.em
+norin.em %>% group_by(contrast) %>% median_hdci(Fit)
+norin.em %>% group_by(contrast, SMR_contr) %>% median_hdci(Fit)
+## norin.em %>%
+##     group_by(contrast) %>%
+##     summarize(P=sum(Fit>0)/n())
+norin.em %>%
+    group_by(contrast, SMR_contr) %>%
+    summarize(P=sum(Fit>0)/n(),
+              P2 = 1 - P)
+
+
+## ----summaryFigure1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=5----
+norin.grid <- with(norin, list(SMR_contr = modelr::seq_range(SMR_contr, n = 100)))
+newdata <- norin.brm4 %>% emmeans(~SMR_contr|TRIAL, at = norin.grid) %>%
+    as.data.frame
+head(newdata)
+
+ggplot(data = newdata, aes(y = emmean, x = SMR_contr)) +
+  geom_ribbon(aes(ymin = lower.HPD, ymax = upper.HPD, fill = TRIAL), alpha = 0.3) +
+  geom_line(aes(, color = TRIAL)) +
+  theme_classic() +
+  theme(legend.position = c(0.99, 0.99),
+        legend.justification = c(1, 1))
+
+## The .fixed values are the predicted values without random effects
+obs <- norin.brm4 %>%
+  augment() %>%
+  mutate(PartialObs=.fitted + .resid)
+
+ggplot(data=newdata, aes(y=emmean, x=SMR_contr)) +
+  geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD, fill=TRIAL), alpha=0.3) +
+  geom_line(aes(, color=TRIAL)) +
+  geom_point(data=obs,  aes(y=PartialObs,  color=TRIAL)) +
+  ## geom_point(data=norin,  aes(y=CHANGE), color='gray') +
+  theme_classic()
+
+
+## ----summaryFigure1a2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=9, fig.height=4----
+g1 <- ggplot(data=newdata, aes(y=emmean, x=SMR_contr)) +
+  geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD, fill=TRIAL), alpha=0.3) +
+  geom_line(aes(, color=TRIAL)) +
+  geom_point(data=obs,  aes(y=PartialObs,  color=TRIAL)) +
+  theme_classic()
+g2 <- ggplot(data=newdata, aes(y=emmean, x=SMR_contr)) +
+  geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD, fill=TRIAL), alpha=0.3) +
+  geom_line(aes(, color=TRIAL)) +
+  geom_point(data=norin,  aes(y=CHANGE,  color=TRIAL)) +
+  theme_classic()
+g1 + g2
 
 
 ## ----fitModels, results='markdown', eval=FALSE, hidden=TRUE-------------------

@@ -3,8 +3,13 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FAL
 
 
 ## ----libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE----
+library(tidyverse)  #for data wrangling etc
 library(rstanarm)   #for fitting models in STAN
+library(cmdstanr)   #for cmdstan
 library(brms)       #for fitting models in STAN
+library(standist)   #for exploring distributions
+library(HDInterval) #for HPD intervals
+library(posterior)  #for posterior draws
 library(coda)       #for diagnostics
 library(bayesplot)  #for diagnostics
 library(ggmcmc)     #for MCMC diagnostics
@@ -15,9 +20,10 @@ library(DHARMa)     #for residual diagnostics
 library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
 library(broom.mixed)#for tidying MCMC outputs
-library(tidyverse)  #for data wrangling etc
 library(patchwork)  #for multiple plots
 library(ggridges)   #for ridge plots 
+library(bayestestR) #for ROPE
+library(see)        #for some plots
 source('helperFunctions.R')
 
 
@@ -146,17 +152,12 @@ tobacco %>%
     group_by(TREATMENT) %>%
     summarise(median(NUMBER),
               mad(NUMBER))
-
-tobacco %>% 
-    group_by(TREATMENT, LEAF) %>%
-    summarise(median = median(NUMBER),
-              MAD = mad(NUMBER)) %>%
-    ungroup(LEAF) %>%
-    summarise(sd(median))
-
-standist::visualize("normal(35,7)", xlim=c(-10,100))
+sd(tobacco$NUMBER)   # 6.5
+standist::visualize("normal(31,7)", xlim=c(-10,100))
 standist::visualize("normal(0, 13)", xlim=c(-20,20))
-standist::visualize("gamma(2,1)",
+standist::visualize(
+              "student_t(3,0,6.5)",
+              "gamma(2,1)",
                     "gamma(2,0.5)",
                     "gamma(5,0.1)",
                     "exponential(1)",
@@ -168,9 +169,9 @@ standist::visualize("gamma(2,1)",
 
 
 ## ----fitModel2h1, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE------
-priors <- prior(normal(35,7), class = 'Intercept') +
+priors <- prior(normal(31,7), class = 'Intercept') +
     prior(normal(0, 13), class = 'b') +
-    prior(gamma(2, 0.5), class = 'sigma') +
+    prior(student_t(3,0,6.5), class = 'sigma') +
     prior(cauchy(0, 2.5), class = 'sd') 
 tobacco.form <- bf(NUMBER ~ (1|LEAF) + TREATMENT,
                      family = gaussian()
@@ -180,10 +181,11 @@ tobacco.brm2 <- brm(tobacco.form,
                   prior = priors,
                   sample_prior = 'only',
                   iter = 5000,
-                  warmup = 1000,
-                  chains = 3,
+                  warmup = 2500,
+                  chains = 3, cores = 3,
                   thin = 5,
-                  refresh = 0
+                  refresh = 0,
+                  backend = "cmdstanr"
                   )
 
 
@@ -197,7 +199,7 @@ tobacco.brm2 %>%
 tobacco.brm3 <- update(tobacco.brm2,  
                        sample_prior = 'yes',
                        control = list(adapt_delta = 0.99),
-                       refresh = 0)
+                       refresh = 0) 
 save(tobacco.brm3, file = '../ws/testing/tobacco.brm3')
 
 
@@ -217,15 +219,15 @@ tobacco.brm3 %>% SUYR_prior_and_posterior()
 
 
 ## ----fitModel2h3, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE------
-priors <- prior(normal(35,7), class = 'Intercept') +
+priors <- prior(normal(31,7), class = 'Intercept') +
     prior(normal(0, 13), class = 'b') +
-    prior(gamma(2, 0.5), class = 'sigma') +
+    prior(student_t(3,0,6.5), class = 'sigma') +
     prior(cauchy(0, 2.5), class = 'sd') +
-    prior(lkj_corr_cholesky(1), class = 'L')
+    prior(lkj_corr_cholesky(1), class = 'cor')
 tobacco.form <- bf(NUMBER ~ (TREATMENT|LEAF) + TREATMENT,
                      family = gaussian()
                    )
-
+ 
 tobacco.brm4 <-  brm(tobacco.form, 
                   data = tobacco,
                   prior = priors,
@@ -235,7 +237,8 @@ tobacco.brm4 <-  brm(tobacco.form,
                   chains = 3,
                   thin = 5,
                   refresh = 0,
-                  control = list(adapt_delta=0.99)
+                  control = list(adapt_delta=0.99),
+                  backend = "cmdstanr"
                   )
 save(tobacco.brm4, file = '../ws/testing/tobacco.brm4')
 
@@ -272,7 +275,7 @@ tobacco.brm4 %>%
 
 
 ## ----fitModel2h3a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-----
-(l.1 <- tobacco.brm3 %>% loo())
+(l.1 <- tobacco.brm3 %>% loo()) 
 (l.2 <- tobacco.brm4 %>% loo())
 loo_compare(l.1, l.2)
 
@@ -378,7 +381,7 @@ tobacco.brm3 %>% pp_check(group = 'TREATMENT', type = 'violin_grouped')
 
 
 ## ----modelValidation6a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-preds <- tobacco.brm3 %>% posterior_predict(ndraws = 250,  summary = FALSE)
+preds <- tobacco.brm4 %>% posterior_predict(ndraws = 250,  summary = FALSE)
 tobacco.resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = tobacco$NUMBER,
                             fittedPredictedResponse = apply(preds, 2, median),
@@ -440,24 +443,48 @@ tobacco.brm3 %>% summary()
 tobacco.sum <- summary(tobacco.brm3)
 
 
+## ----summariseModel2i2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+tobacco.brm3 %>%
+  summarise_draws(
+    median,
+    ~ HDInterval::hdi(.x),
+    rhat,
+    ess_bulk,
+    ess_tail
+  )
+
+## or if you want to exclude some parameters
+tobacco.brm3 %>%
+  summarise_draws(
+    median,
+    ~ HDInterval::hdi(.x),
+    rhat,
+    ess_bulk,
+    ess_tail
+  ) %>%
+  filter(str_detect(variable, 'prior|^r_|^lp__', negate = TRUE)) 
+
+
 ## ----summariseModel2i, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 tobacco.brm3 %>% as_draws_df()
 tobacco.brm3 %>%
   as_draws_df() %>%
   summarise_draws(
-    "median",
+    median,
     ~ HDInterval::hdi(.x),
-    "rhat",
-    "ess_bulk"
+    rhat,
+    ess_bulk,
+    ess_tail
   )
 ## or if you want to exclude some parameters
 tobacco.brm3 %>%
   as_draws_df() %>%
   summarise_draws(
-    "median",
+    median,
     ~ HDInterval::hdi(.x),
-    "rhat",
-    "ess_bulk"
+    rhat,
+    ess_bulk,
+    ess_tail
   ) %>%
   filter(str_detect(variable, 'prior|^r_|^lp__', negate = TRUE)) 
 
@@ -583,7 +610,36 @@ tobacco.brm3 %>%
 ##     median_hdci
 
 
+## ----summariseModel2k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+0.1 * sd(tobacco$NUMBER)
+tobacco.brm3 %>% rope(range = c(-0.65, 0.65))
+rope(tobacco.brm3, range = c(-0.65, 0.65)) %>% plot()
+
+## Or based on fractional scale
+tobacco.brm3 %>% emmeans(~TREATMENT) %>%
+    gather_emmeans_draws() %>%
+    group_by(.draw) %>%
+    arrange(desc(TREATMENT)) %>%
+    summarise(Diff = 100*(exp(diff(log(.value))) -1)) %>%
+    rope(range = c(-10,10))
+
+
+
 ## ----predictions2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+tobacco.brm3 %>% emmeans(~TREATMENT) %>%
+    gather_emmeans_draws() %>%
+    group_by(.draw) %>%
+    arrange(desc(TREATMENT)) %>%
+    summarise(Diff = 100*(exp(diff(log(.value))) -1)) %>%
+    summarise_draws(
+        median,
+        ~ HDInterval::hdi(.x),
+        rhat,
+        ess_bulk,
+        ess_tail
+        )
+
+## Or via gather and pivot
 newdata <- tobacco.brm3 %>%
     emmeans(~TREATMENT) %>%
     gather_emmeans_draws() %>%

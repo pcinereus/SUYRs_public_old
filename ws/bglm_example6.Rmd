@@ -50,8 +50,13 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FAL
 Load the necessary libraries
 
 ```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(tidyverse)  #for data wrangling etc
 library(rstanarm)   #for fitting models in STAN
+library(cmdstanr)   #for cmdstan
 library(brms)       #for fitting models in STAN
+library(standist)   #for exploring distributions
+library(HDInterval) #for HPD intervals
+library(posterior)  #for posterior draws
 library(coda)       #for diagnostics
 library(bayesplot)  #for diagnostics
 library(ggmcmc)     #for diagnostics
@@ -62,8 +67,10 @@ library(broom)      #for tidying outputs
 library(broom.mixed) #for tidying MCMC outputs
 library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
-library(tidyverse)  #for data wrangling etc
 library(patchwork)  #for multiple figures
+library(bayestestR) #for ROPE
+library(see)        #for some plots
+library(ggridges)   #for ridge plots
 source('helperFunctions.R')
 ```
 
@@ -142,6 +149,121 @@ where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a m
 # Fit the model {.tabset .tabset-faded}
 
 
+**Conclusions:**
+
+- we see that the range of predictions is fairly wide and the predicted means could range
+  from 0 to very large (perhaps too large).
+
+### Defining priors {.tabset .tabset-pills}
+
+The following link provides some guidance about defining priors.
+[https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations]
+
+When defining our own priors, we typically do not want them to be scaled.
+
+If we wanted to define our own priors that were less vague, yet still not likely
+to bias the outcomes, we could try the following priors (mainly plucked out of
+thin air):
+
+- $\beta_0$: normal centred at 2.3 with a standard deviation of 5 
+- $\beta_1$: normal centred at 0 with a standard deviation of 2
+
+Remember the above are applied on the link scale.
+
+I will also overlay the raw data for comparison.
+
+
+<div>
+
+#### ggpredict
+
+
+#### ggemmeans
+
+
+</div>
+
+Now lets refit, conditioning on the data.
+
+
+### Plotting prior and posterior {.tabset .tabset-pills}
+
+
+**Conclusions:**
+
+- in each case, the prior is substantially wider than the posterior, suggesting
+  that the posterior is not biased towards the prior.
+  
+<div>
+
+#### ggpredict
+
+
+#### ggemmeans
+
+
+</div>
+
+## brms {.tabset .tabset-pills}
+
+### Using default priors
+
+In `brms`, the default priors are designed to be weakly informative.  They are
+chosen to provide moderate regularisation (to help prevent over-fitting) and
+help stabilise the computations.
+
+Unlike `rstanarm`, `brms` models must be compiled before they start sampling.
+For most models, the compilation of the stan code takes around 45 seconds.
+
+
+
+
+### Defining priors {.tabset .tabset-pills}
+
+Remember that the priors are applied on the link (in this case, log) scale.
+
+```{r fitModel2d1, results='markdown', eval=TRUE}
+quinn %>%
+    group_by(SEASON, DENSITY) %>%
+    summarise(Mean = mean(RECRUITS),
+              Median = median(RECRUITS),
+              MAD = mad(RECRUITS),
+              SD = sd(RECRUITS)) %>%
+    mutate(log(Mean),
+           log(Median),
+           log(MAD),
+           log(SD))
+```
+
+- $\beta_0$: normal centred at 2.3 with a standard deviation of 1.5
+- $\beta_1$: normal centred at 0 with a standard deviation of 1
+
+
+
+ 
+<div>
+
+#### ggpredict 
+
+
+#### ggemmeans
+
+
+#### conditional_effects
+
+
+</div>
+
+
+### Plotting prior and posterior
+
+
+
+### Exploring the stan code
+
+
+</div>
+
 
 # MCMC sampling diagnostics {.tabset .tabset-faded}
 
@@ -160,7 +282,7 @@ where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a m
 # Model investigation {.tabset .tabset-faded}
 
 
-# Predictions {.tabset .tabset-faded}
+# Further investigations {.tabset .tabset-faded}
 
 
 # Summary figures {.tabset .tabset-faded}

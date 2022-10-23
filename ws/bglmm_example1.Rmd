@@ -50,8 +50,13 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FAL
 Load the necessary libraries
 
 ```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(tidyverse)  #for data wrangling etc
 library(rstanarm)   #for fitting models in STAN
+library(cmdstanr)   #for cmdstan
 library(brms)       #for fitting models in STAN
+library(standist)   #for exploring distributions
+library(HDInterval) #for HPD intervals
+library(posterior)  #for posterior draws
 library(coda)       #for diagnostics
 library(bayesplot)  #for diagnostics
 library(ggmcmc)     #for MCMC diagnostics
@@ -62,13 +67,12 @@ library(DHARMa)     #for residual diagnostics
 library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
 library(broom.mixed)#for tidying MCMC outputs
-library(tidyverse)  #for data wrangling etc
 library(patchwork)  #for multiple plots
 library(ggridges)   #for ridge plots 
+library(bayestestR) #for ROPE
+library(see)        #for some plots
 source('helperFunctions.R')
 ```
-
-inferior-ess-fontify-region
 
 # Scenario
 
@@ -103,7 +107,7 @@ tobacco %>% glimpse()
 ```
 
 # Exploratory data analysis
-
+	
 
 Model formula:
 $$
@@ -150,7 +154,7 @@ where $\Sigma$ is a covariance matrix.
 It turns out that it is difficult to apply a prior on a covariance matrix, so
 instead, we decompose the covariance matrix into a correlation matrix and variance.
 
-https://jrnold.github.io/bayesian_notes/appendix.html - 20.15.3 Covariance-Correlation Matrix Decomposition
+https://jrnold.github.io/bayesian_notes/appendix.html - Section 20.15.3 Covariance-Correlation Matrix Decomposition
 
 - Covariance matrix can be decomposed into a correlation matrix and a vector of
   variances
@@ -202,9 +206,8 @@ https://jrnold.github.io/bayesian_notes/appendix.html - 20.15.3 Covariance-Corre
 # Model investigation {.tabset .tabset-faded}
 
 
-
 # Further investigations {.tabset .tabset-faded}
 
-
+ 
 
 # References

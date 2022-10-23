@@ -50,8 +50,13 @@ knitr::opts_chunk$set(echo = TRUE)
 Load the necessary libraries
 
 ```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(tidyverse)  #for data wrangling etc
 library(rstanarm)   #for fitting models in STAN
+library(cmdstanr)   #for cmdstan
 library(brms)       #for fitting models in STAN
+library(standist)   #for exploring distributions
+library(HDInterval) #for HPD intervals
+library(posterior)  #for posterior draws
 library(coda)       #for diagnostics
 library(bayesplot)  #for diagnostics
 library(ggmcmc)     #for MCMC diagnostics
@@ -62,25 +67,30 @@ library(DHARMa)     #for residual diagnostics
 library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
 library(broom.mixed)#for tidying MCMC outputs
-library(tidyverse)  #for data wrangling etc
 library(patchwork)  #for multiple plots
 library(ggridges)   #for ridge plots 
+library(bayestestR) #for ROPE
+library(see)        #for some plots
 source('helperFunctions.R')
 ```
 
 # Scenario
 
-To investigate differential metabolic plasticity in barramundi (*Lates calcarifer*),
-@Norin-2016-369 exposed juvenile barramundi to various environmental changes (increased temperature,
-decreased salinity and increased hypoxia) as well as control conditions.
-Metabolic plasticity was calculated as the percentage difference in standard metabolic rate between
-the various treatment conditions and the standard metabolic rate under control conditions.
-They were interested in whether there was a relationship between metabolic plasticity and typical (control) metabolism and
-how the different treatment conditions impact on this relationship.
+To investigate differential metabolic plasticity in barramundi (*Lates
+calcarifer*), @Norin-2016-369 exposed juvenile barramundi to various
+environmental changes (increased temperature, decreased salinity and
+increased hypoxia) as well as control conditions.  Metabolic
+plasticity was calculated as the percentage difference in standard
+metabolic rate between the various treatment conditions and the
+standard metabolic rate under control conditions.  They were
+interested in whether there was a relationship between metabolic
+plasticity and typical (control) metabolism and how the different
+treatment conditions impact on this relationship.
 
-A total of 60 barramundi juveniles were subject to each of the three conditions (high temperature,
-low salinity and hypoxia) in addition to control conditions.
-Fish mass was also recorded as a covariate as this is known to influence metabolic parameters.
+A total of 60 barramundi juveniles were subject to each of the three
+conditions (high temperature, low salinity and hypoxia) in addition to
+control conditions.  Fish mass was also recorded as a covariate as
+this is known to influence metabolic parameters.
 
 ![Barramundi](../resources/barramundi.png){width="310"}
 
@@ -132,9 +142,12 @@ y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
 \beta_{1-6} \sim{} \mathcal{N}(0, 70)\\
 $$
 
-where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of the fixed and random effects parameters respectively 
-and $\bf{X}$ is the  model matrix representing the overall intercept and effects of temperature and (centered) mean fish size on SDA peak.
-$\bf{Z}$ represents a cell means model matrix for the random intercepts associated with individual fish.
+where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of
+the fixed and random effects parameters respectively and $\bf{X}$ is
+the model matrix representing the overall intercept and effects of
+temperature and (centered) mean fish size on SDA peak.  $\bf{Z}$
+represents a cell means model matrix for the random intercepts
+associated with individual fish.
 
 
 

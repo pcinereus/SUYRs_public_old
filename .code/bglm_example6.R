@@ -3,8 +3,13 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FAL
 
 
 ## ----libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE----
+library(tidyverse)  #for data wrangling etc
 library(rstanarm)   #for fitting models in STAN
+library(cmdstanr)   #for cmdstan
 library(brms)       #for fitting models in STAN
+library(standist)   #for exploring distributions
+library(HDInterval) #for HPD intervals
+library(posterior)  #for posterior draws
 library(coda)       #for diagnostics
 library(bayesplot)  #for diagnostics
 library(ggmcmc)     #for diagnostics
@@ -15,8 +20,10 @@ library(broom)      #for tidying outputs
 library(broom.mixed) #for tidying MCMC outputs
 library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
-library(tidyverse)  #for data wrangling etc
 library(patchwork)  #for multiple figures
+library(bayestestR) #for ROPE
+library(see)        #for some plots
+library(ggridges)   #for ridge plots
 source('helperFunctions.R')
 
 
@@ -62,25 +69,83 @@ quinn.rstanarm1 <- stan_glm(RECRUITS~SEASON*DENSITY, data = quinn,
                             chains = 3, iter = 5000, thin = 5, warmup = 2000)
 
 
-## ----fitModel1g, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
-ggpredict(quinn.rstanarm1,  ~SEASON+DENSITY) %>% plot()
-ggemmeans(quinn.rstanarm1,  ~SEASON+DENSITY) %>%
-  plot(add.data=TRUE)
+## ----fitModel1g1, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
+quinn.rstanarm1 %>%
+    ggpredict(~SEASON+DENSITY) %>%
+    plot(add.data = TRUE)
+quinn.rstanarm1 %>%
+    ggpredict(~SEASON+DENSITY) %>%
+    plot(add.data = TRUE) %>%
+    wrap_plots() &
+    scale_y_log10()
+## although, since there are zeros...
+quinn.rstanarm1 %>%
+    ggpredict(~SEASON+DENSITY) %>%
+    plot(add.data = TRUE, jitter = FALSE) %>%
+    wrap_plots() &
+    scale_y_continuous(trans = scales::pseudo_log_trans())
+
+
+## ----fitModel1g2, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
+quinn.rstanarm1 %>%
+    ggemmeans(~SEASON+DENSITY) %>%
+    plot(add.data=TRUE) %>%
+    plot(add.data = TRUE) %>%
+    wrap_plots() &
+    scale_y_log10()
+## although, since there are zeros...
+quinn.rstanarm1 %>%
+    ggemmeans(~SEASON+DENSITY) %>%
+    plot(add.data = TRUE, jitter = FALSE) %>%
+    wrap_plots() &
+    scale_y_continuous(trans = scales::pseudo_log_trans())
 
 
 ## ----fitModel1h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
+quinn %>% group_by(SEASON, DENSITY) %>%
+    summarise(Mean = log(mean(RECRUITS)),
+              SD = log(sd(RECRUITS)))
+log(sd(quinn$RECRUITS))/
+    apply(model.matrix(~SEASON*DENSITY, data = quinn), 2, sd)
 quinn.rstanarm2 <- stan_glm(RECRUITS~SEASON*DENSITY, data = quinn,
                             family = poisson(link = 'log'),
-                            prior_intercept = normal(2.3, 5, autoscale = FALSE),
-                            prior = normal(0, 2, autoscale = FALSE),
+                            prior_intercept = normal(2.3, 2, autoscale = FALSE),
+                            prior = normal(0, 10, autoscale = FALSE),
                             prior_PD = TRUE, 
                             refresh = 0,
                             chains = 3, iter = 5000, thin = 5, warmup = 2000)
 
 
-## ----fitModel1i, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
-quinn.rstanarm2 %>% ggpredict(~SEASON+DENSITY) %>%
-  plot(add.data = TRUE)
+## ----fitModel1i1, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
+quinn.rstanarm2 %>%
+    ggpredict(~SEASON+DENSITY) %>%
+    plot(add.data = TRUE)
+quinn.rstanarm2 %>%
+    ggpredict(~SEASON+DENSITY) %>%
+    plot(add.data = TRUE) %>%
+    wrap_plots() &
+    scale_y_log10()
+## although, since there are zeros...
+quinn.rstanarm2 %>%
+    ggpredict(~SEASON+DENSITY) %>%
+    plot(add.data = TRUE, jitter = FALSE) %>%
+    wrap_plots() &
+    scale_y_continuous(trans = scales::pseudo_log_trans())
+
+
+## ----fitModel1i2, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
+quinn.rstanarm2 %>%
+    ggemmeans(~SEASON+DENSITY) %>%
+    plot(add.data=TRUE) %>%
+    plot(add.data = TRUE) %>%
+    wrap_plots() &
+    scale_y_log10()
+## although, since there are zeros...
+quinn.rstanarm2 %>%
+    ggemmeans(~SEASON+DENSITY) %>%
+    plot(add.data = TRUE, jitter = FALSE) %>%
+    wrap_plots() &
+    scale_y_continuous(trans = scales::pseudo_log_trans())
 
 
 ## ----fitModel1j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
@@ -92,9 +157,16 @@ quinn.rstanarm3 %>% posterior_vs_prior(color_by = 'vs', group_by = TRUE,
                    facet_args = list(scales = 'free_y'))
 
 
-## ----modelFit1l, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-quinn.rstanarm3 %>% ggpredict(~SEASON+DENSITY) %>% plot(add.data = TRUE)
-quinn.rstanarm3 %>% ggemmeans(~SEASON+DENSITY) %>% plot(add.data = TRUE)
+## ----modelFit1l1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
+quinn.rstanarm3 %>%
+    ggpredict(~SEASON+DENSITY) %>%
+    plot(add.data = TRUE)
+
+
+## ----modelFit1l2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
+quinn.rstanarm3 %>%
+    ggemmeans(~SEASON+DENSITY) %>%
+    plot(add.data=TRUE) 
 
 
 ## ----fitModel2a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
@@ -111,14 +183,18 @@ options(width=80)
 quinn %>%
     group_by(SEASON, DENSITY) %>%
     summarise(Mean = mean(RECRUITS),
-              MAD = mad(RECRUITS)) %>%
+              Median = median(RECRUITS),
+              MAD = mad(RECRUITS),
+              SD = sd(RECRUITS)) %>%
     mutate(log(Mean),
-           log(MAD))
+           log(Median),
+           log(MAD),
+           log(SD))
 
 
 ## ----fitModel2h, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
-priors <- prior(normal(2.3, 2), class = 'Intercept') +
-    prior(normal(0, 1), class = 'b')
+priors <- prior(normal(2.4, 1.5), class = 'Intercept') +
+    prior(normal(0, 1), class = 'b') 
 quinn.brm2 <- brm(quinn.form,
                   data = quinn,
                   prior = priors,
@@ -127,29 +203,64 @@ quinn.brm2 <- brm(quinn.form,
                   chains = 3,
                   iter = 5000,
                   thin = 5,
-                  warmup = 2000)
+                  warmup = 2500,
+                  backend = 'cmdstanr') 
 
 
-## ----fitModel2i, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
-quinn.brm2 %>% ggpredict(~SEASON+DENSITY) %>% plot(add.data=TRUE)
-quinn.brm2 %>% ggpredict(~SEASON+DENSITY) %>% plot(add.data=TRUE) + scale_y_log10()
+## ----fitModel2i1, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
+quinn.brm2 %>%
+    ggpredict(~SEASON+DENSITY) %>%
+    plot(add.data=TRUE)
+quinn.brm2 %>%
+    ggpredict(~SEASON+DENSITY) %>%
+    plot(add.data=TRUE) +
+    scale_y_log10()
+## Or since there are zeros
+quinn.brm2 %>%
+    ggpredict(~SEASON+DENSITY) %>%
+    plot(add.data=TRUE) +
+    scale_y_continuous(trans = scales::pseudo_log_trans())
 
-quinn.brm2 %>% ggemmeans(~SEASON+DENSITY) %>% plot(add.data=TRUE)
-quinn.brm2 %>% ggemmeans(~SEASON+DENSITY) %>% plot(add.data=TRUE) + scale_y_log10()
 
-quinn.brm2 %>% conditional_effects('SEASON:DENSITY') %>%  plot(points=TRUE)
-quinn.brm2 %>% conditional_effects('SEASON:DENSITY') %>%  plot(points=TRUE) %>% `[[`(1) + scale_y_log10()
+## ----fitModel2i2, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
+quinn.brm2 %>%
+    ggemmeans(~SEASON+DENSITY) %>%
+    plot(add.data=TRUE)
+quinn.brm2 %>%
+    ggemmeans(~SEASON+DENSITY) %>%
+    plot(add.data=TRUE) +
+    scale_y_log10()
+## Or since there are zeros
+quinn.brm2 %>%
+    ggemmeans(~SEASON+DENSITY) %>%
+    plot(add.data=TRUE) +
+    scale_y_continuous(trans = scales::pseudo_log_trans())
+
+
+## ----fitModel2i3, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
+quinn.brm2 %>%
+    conditional_effects('SEASON:DENSITY') %>%
+    plot(points=TRUE)
+quinn.brm2 %>%
+    conditional_effects('SEASON:DENSITY') %>%
+    plot(points=TRUE) %>%
+    wrap_plots() &
+    scale_y_continuous(trans = scales::pseudo_log_trans())
 
 
 ## ----fitModel2j, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
 quinn.brmP <- quinn.brm2 %>% update(sample_prior = 'yes', refresh = 0)
 
 
-## ----fitModel2k, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE------
+## ----fitModel2k1, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
 quinn.brmP %>% get_variables()
 quinn.brmP %>% hypothesis('SEASONSummer<0') %>% plot()
 quinn.brmP %>% hypothesis('DENSITYLow<0') %>% plot()
 quinn.brmP %>% hypothesis('SEASONSummer:DENSITYLow<0') %>% plot()
+
+
+## ----fitModel2k2, results='markdown', out.width = 600, fig.width = 8, fig.height = 4, eval=TRUE, hidden=TRUE, cache=FALSE----
+quinn.brmP %>% SUYR_prior_and_posterior()
 quinn.brmP %>%
   posterior_samples %>%
   dplyr::select(-`lp__`) %>%
@@ -299,7 +410,7 @@ available_ppc()
 
 
 ## ----modelValidation5b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
-quinn.brmP %>% pp_check(type = 'dens_overlay')
+quinn.brmP %>% pp_check(type = 'dens_overlay', ndraws = 100)
 
 
 ## ----modelValidation5c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=4----
@@ -318,11 +429,11 @@ quinn.brmP %>% pp_check(type='intervals')
 
 ## ----modelValidation6a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 preds <- quinn.brmP %>% posterior_predict(nsamples = 250,  summary = FALSE)
-day.resids <- createDHARMa(simulatedResponse = t(preds),
+quinn.resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = quinn$RECRUITS,
                             fittedPredictedResponse = apply(preds, 2, median),
                             integerResponse = TRUE)
-day.resids %>% plot()
+quinn.resids %>% plot()
 
 quinn.resids %>% testDispersion()
 quinn.resids %>% testZeroInflation()
@@ -331,8 +442,8 @@ quinn.resids %>% testZeroInflation()
 ## ----fitModel3a, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
 quinn.rstanarmNB <- stan_glm(RECRUITS~SEASON*DENSITY, data = quinn,
                             family = neg_binomial_2(link = 'log'),
-                            prior_intercept = normal(2.3, 5, autoscale = FALSE),
-                            prior = normal(0, 2, autoscale = FALSE),
+                            prior_intercept = normal(2.3, 2, autoscale = FALSE),
+                            prior = normal(0, 10, autoscale = FALSE),
                             prior_aux = rstanarm::exponential(rate = 1, autoscale = FALSE),
                             prior_PD = FALSE, 
                             refresh = 0,
@@ -343,22 +454,32 @@ quinn.rstanarmNB <- stan_glm(RECRUITS~SEASON*DENSITY, data = quinn,
 posterior_vs_prior(quinn.rstanarmNB, color_by='vs', group_by=TRUE,
                    facet_args=list(scales='free_y'))
 
+
+## ----fitModel3b2, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
 quinn.rstanarmNB %>% ggpredict(~SEASON+DENSITY) %>% plot(add.data = TRUE)
 
-quinn.rstanarmNB %>% ggemmeans(~SEASON+DENSITY, transform = TRUE) %>% plot(add.data=TRUE)
 
+## ----fitModel3b3, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
+quinn.rstanarmNB %>%
+    ggemmeans(~SEASON+DENSITY, back.transform = TRUE) %>%
+    plot(add.data=TRUE)
+
+
+## ----fitModel3b4, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
 quinn.rstanarmNB %>% plot('mcmc_trace')
 quinn.rstanarmNB %>% plot('mcmc_acf_bar')
 quinn.rstanarmNB %>% plot('mcmc_rhat_hist')
 quinn.rstanarmNB %>% plot('mcmc_neff_hist')
 
 
+## ----fitModel3b5, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE, fig.width = 8, fig.height = 4, out.width = 600----
 preds <- posterior_predict(quinn.rstanarmNB,  nsamples=250,  summary=FALSE)
 quinn.resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = quinn$RECRUITS,
                             fittedPredictedResponse = apply(preds, 2, median),
                             integerResponse=TRUE)
 plot(quinn.resids)
+quinn.resids %>% testDispersion()
 
 
 ## ----fitModel3c, results='markdown', eval=TRUE, hidden=TRUE, cache=TRUE-------
@@ -371,7 +492,7 @@ loo_compare(loo.P, loo.NB)
 quinn.form <- bf(RECRUITS ~ SEASON*DENSITY,  family = negbinomial(link = 'log'))
 get_prior(quinn.form,  data = quinn)
 
-priors <- prior(normal(2.3, 2), class = 'Intercept') +
+priors <- prior(normal(2.4, 1.5), class = 'Intercept') +
     prior(normal(0, 1), class = 'b') +
     prior(gamma(0.01, 0.01), class = "shape")
 quinn.brmsNB <- brm(quinn.form,
@@ -381,10 +502,11 @@ quinn.brmsNB <- brm(quinn.form,
                     chains = 3,
                     iter = 5000,
                     thin = 5,
-                    warmup = 2000) 
+                    warmup = 2500,
+                    backend = "cmdstanr") 
 
 
-## ----fitModel4a1, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE-----
+## ----fitModel4a1, results='markdown', eval=TRUE, hidden=TRUE, cache=FALSE, fig.width = 8, fig.height = 4, out.width = 600----
 preds <- posterior_predict(quinn.brmsNB,  nsamples = 250,  summary = FALSE)
 quinn.resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = quinn$RECRUITS,
@@ -399,7 +521,7 @@ quinn.rstanarmNB %>% ggpredict(~SEASON+DENSITY) %>% plot(add.data=TRUE)
 
 ## ----partialPlot1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 quinn.rstanarmNB %>%
-    ggemmeans(~SEASON|DENSITY,  type='fixed', transform = TRUE) %>%
+    ggemmeans(~SEASON|DENSITY,  type='fixed', back.transform = TRUE) %>%
     plot(add.data=TRUE)
 
 
@@ -450,16 +572,48 @@ tidyMCMC(quinn.rstanarmNB$stanfit, estimate.method='median',  conf.int=TRUE,  co
 quinn.tidy <- tidyMCMC(quinn.rstanarmNB$stanfit, estimate.method='median',  conf.int=TRUE,  conf.method='HPDinterval',  rhat=TRUE, ess=TRUE)
 
 
+## ----summariseModel1dd, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+quinn.rstanarmNB$stanfit %>%
+    summarise_draws(median,
+                    HDInterval::hdi,
+                    rhat, length, ess_bulk, ess_tail)
+
+
+## ----summariseModel1d2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+quinn.rstanarmNB$stanfit %>%
+    summarise_draws(median,
+                    ~HDInterval::hdi(.x, credMass = 0.9),
+                    rhat, length, ess_bulk, ess_tail)
+
+
+## ----summariseModel1d3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+quinn.rstanarmNB$stanfit %>%
+    summarise_draws(
+        ~ median(exp(.x)),
+        ~HDInterval::hdi(exp(.x)),
+        rhat, length, ess_bulk, ess_tail)
+
+
 ## ----summariseModel1m, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 quinn.rstanarmNB$stanfit %>% as_draws_df()
 quinn.rstanarmNB$stanfit %>%
-  as_draws_df() %>%
-  summarise_draws(
-    "median",
-    ~ HDInterval::hdi(.x),
-    "rhat",
-    "ess_bulk"
-  )
+    as_draws_df() %>%
+    summarise_draws(
+        median,
+        ~ HDInterval::hdi(.x),
+        rhat,
+        ess_bulk
+    )
+
+quinn.rstanarmNB$stanfit %>%
+    as_draws_df() %>%
+    exp() %>% 
+    summarise_draws(
+        median,
+        ~ HDInterval::hdi(.x),
+        rhat,
+        ess_bulk
+    )
 
 
 ## ----summariseModel1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
@@ -467,9 +621,26 @@ quinn.rstanarmNB %>% get_variables()
 quinn.draw <- quinn.rstanarmNB %>% gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY.*`,  regex=TRUE)
 quinn.draw
 
+exceedP <- function(x, Val = 0) sum(x>Val)/length(x)
+
+quinn.rstanarmNB %>%
+    gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY.*`,  regex=TRUE) %>%
+    mutate(.value = exp(.value)) %>%
+    summarise_draws(median,
+                    HDInterval::hdi,
+                    rhat,
+                    length,
+                    ess_bulk,
+                    ess_tail,
+                    ~ exceedP(.x, 1))
+
 
 ## ----summariseModel1c1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 quinn.draw %>% median_hdci
+
+
+## ----summariseModel1c8, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+quinn.draw %>% median_hdci(exp(.value))
 
 
 ## ----summariseModel1c3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=FALSE----
@@ -511,6 +682,75 @@ quinn.rstanarmNB %>%
 quinn.rstanarmNB %>% plot(plotfun='mcmc_intervals') 
 
 
+## ----summariseModel2d5, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
+## Link scale
+quinn.rstanarmNB %>%
+    gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY.*`, regex=TRUE) %>%
+    ggplot() +
+    stat_slab(aes(x = .value, y = .variable,
+                  fill = stat(ggdist::cut_cdf_qi(cdf,
+                           .width = c(0.5, 0.8, 0.95), 
+                           labels = scales::percent_format())
+                           )), color='black') + 
+    geom_vline(xintercept=0, linetype='dashed') +
+    scale_fill_brewer('Interval', direction = -1, na.translate = FALSE) 
+## Fractional scale
+quinn.rstanarmNB %>%
+    gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY.*`, regex=TRUE) %>%
+    mutate(.value=exp(.value)) %>%
+    ggplot() +
+    stat_slab(aes(x = .value, y = .variable,
+                  fill = stat(ggdist::cut_cdf_qi(cdf,
+                           .width = c(0.5, 0.8, 0.95), 
+                           labels = scales::percent_format())
+                           )), color='black') + 
+    geom_vline(xintercept=1, linetype='dashed') +
+    scale_fill_brewer('Interval', direction = -1, na.translate = FALSE) +
+    scale_x_continuous(trans = scales::log2_trans())
+
+
+## ----summariseModel1c44, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
+quinn.rstanarmNB %>% 
+  gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY.*`, regex=TRUE) %>% 
+  ggplot() + 
+  stat_halfeye(aes(x=.value,  y=.variable)) +
+  facet_wrap(~.variable, scales='free')
+
+quinn.rstanarmNB %>% 
+  gather_draws(`.*SEASON.*|.*DENSITY.*`, regex=TRUE) %>% 
+  ggplot() + 
+    stat_halfeye(aes(x=.value,  y=.variable)) +
+    geom_vline(xintercept = 0, linetype = 'dashed')
+
+quinn.rstanarmNB %>%  
+  gather_draws(`.*SEASON.*|.*DENSITY.*`, regex=TRUE) %>% 
+  ggplot() + 
+    stat_halfeye(aes(x=exp(.value),  y=.variable)) +
+    geom_vline(xintercept = 1, linetype = 'dashed') +
+    scale_x_continuous(trans = scales::log2_trans())
+
+
+## ----summariseModel1c7, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
+quinn.rstanarmNB %>% 
+  gather_draws(`.*SEASON.*|.*DENSITY.*`, regex=TRUE) %>% 
+  ggplot() + 
+    geom_density_ridges(aes(x=.value, y = .variable), alpha=0.4) +
+    geom_vline(xintercept = 0, linetype = 'dashed')
+##Or on a fractional scale
+quinn.rstanarmNB %>% 
+  gather_draws(`.*SEASON.*|.*DENSITY.*`, regex=TRUE) %>% 
+  ggplot() + 
+    geom_density_ridges_gradient(aes(x=exp(.value),
+                                     y = .variable,
+                                     fill = stat(x)),
+                                 alpha=0.4, colour = 'white',
+                                 quantile_lines = TRUE,
+                                 quantiles = c(0.025, 0.975)) +
+    geom_vline(xintercept = 1, linetype = 'dashed') +
+    scale_x_continuous(trans = scales::log2_trans()) +
+    scale_fill_viridis_c(option = "C")
+
+
 ## ----summariseModel1d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 quinn.rstanarmNB %>% tidy_draws()
 
@@ -537,7 +777,12 @@ quinn.sum <- quinn.sum$fixed
 
 
 ## ----summariseModel2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
-quinn.brmsNB$fit %>% tidyMCMC(estimate.method = 'median',  conf.int = TRUE,  conf.method = 'HPDinterval',  rhat = TRUE, ess = TRUE)
+quinn.brmsNB$fit %>%
+    tidyMCMC(estimate.method = 'median',
+             conf.int = TRUE,
+             conf.method = 'HPDinterval',
+             rhat = TRUE,
+             ess = TRUE)
 
 ## ----summariseModel2b1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=FALSE----
 quinn.tidy <- tidyMCMC(quinn.brmsNB$fit, estimate.method='median',  conf.int=TRUE,  conf.method='HPDinterval',  rhat=TRUE, ess=TRUE)
@@ -548,11 +793,22 @@ quinn.brmsNB %>% as_draws_df()
 quinn.brmsNB %>%
   as_draws_df() %>%
   summarise_draws(
-    "median",
+    median,
     ~ HDInterval::hdi(.x),
-    "rhat",
-    "ess_bulk"
+    rhat,
+    ess_bulk, ess_tail
   )
+
+quinn.brmsNB %>%
+    as_draws_df() %>%
+    exp() %>%
+    summarise_draws(
+        median,
+        HDInterval::hdi,
+        rhat,
+        length,
+        ess_bulk, ess_tail
+    )
 
 
 ## ----summariseModel2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
@@ -561,9 +817,35 @@ quinn.draw <- quinn.brmsNB %>%
     gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY.*`,  regex = TRUE)
 quinn.draw
 
+quinn.brmsNB %>%
+    gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY.*`,  regex = TRUE) %>%
+    mutate(.value = exp(.value)) %>%
+    summarise_draws(median,
+                    ~HDInterval::hdi(.x, credMass = 0.95),
+                    rhat,
+                    length,
+                    ess_bulk, ess_tail)
+    
+
+exceedP <- function(x, Val = 0) sum(x>Val)/length(x)
+quinn.brmsNB %>%
+    tidy_draws() %>%
+    exp() %>%
+    dplyr::select(starts_with("b_")) %>%
+    summarise_draws(median,
+                    ~HDInterval::hdi(.x, credMass = 0.9),
+                    rhat,
+                    ess_bulk, ess_tail,
+                    ~exceedP(.x, 1))
+
 
 ## ----summariseModel2c1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 quinn.draw %>% median_hdci
+
+
+## ----summariseModel2c5, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
+quinn.draw %>% 
+  median_hdci(exp(.value))
 
 
 ## ----summariseModel2c3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=FALSE----
@@ -571,7 +853,7 @@ quinn.gather <- quinn.brmsNB %>% gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY
   median_hdci
 
 
-## ----summariseModel2c4, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
+## ----summariseModel2c45, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
 quinn.brmsNB %>%
     gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY.*`, regex=TRUE) %>% 
     ggplot() +
@@ -591,7 +873,7 @@ quinn.brmsNB %>%
     theme_classic()
 
 
-## ----summariseModel2c5, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
+## ----summariseModel2c55, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
 quinn.brmsNB %>% 
   gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY.*`, regex=TRUE) %>%
   group_by(.variable) %>%
@@ -617,6 +899,75 @@ quinn.brmsNB %>%
 quinn.brmsNB$fit %>% plot(type='intervals') 
 
 
+## ----summariseModel2d55, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
+## Link scale
+quinn.brmsNB %>%
+    gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY.*`, regex=TRUE) %>%
+    ggplot() +
+    stat_slab(aes(x = .value, y = .variable,
+                  fill = stat(ggdist::cut_cdf_qi(cdf,
+                           .width = c(0.5, 0.8, 0.95), 
+                           labels = scales::percent_format())
+                           )), color='black') + 
+    geom_vline(xintercept=0, linetype='dashed') +
+    scale_fill_brewer('Interval', direction = -1, na.translate = FALSE) 
+## Fractional scale
+quinn.brmsNB %>%
+    gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY.*`, regex=TRUE) %>%
+    mutate(.value=exp(.value)) %>%
+    ggplot() +
+    stat_slab(aes(x = .value, y = .variable,
+                  fill = stat(ggdist::cut_cdf_qi(cdf,
+                           .width = c(0.5, 0.8, 0.95), 
+                           labels = scales::percent_format())
+                           )), color='black') + 
+    geom_vline(xintercept=1, linetype='dashed') +
+    scale_fill_brewer('Interval', direction = -1, na.translate = FALSE) +
+    scale_x_continuous(trans = scales::log2_trans())
+
+
+## ----summariseModel2c4, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
+quinn.brmsNB %>%
+    gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY.*`, regex=TRUE) %>%
+    ggplot() + 
+    stat_halfeye(aes(x=.value,  y=.variable)) +
+    facet_wrap(~.variable, scales='free')
+
+quinn.brmsNB %>%
+    gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY.*`, regex=TRUE) %>%
+    ggplot() + 
+    stat_halfeye(aes(x=.value,  y=.variable)) +
+    geom_vline(xintercept = 0, linetype = 'dashed')
+
+quinn.brmsNB %>%
+    gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY.*`, regex=TRUE) %>%
+    ggplot() + 
+    stat_halfeye(aes(x=exp(.value),  y=.variable)) +
+    geom_vline(xintercept = 1, linetype = 'dashed') +
+    scale_x_continuous(trans = scales::log2_trans())
+
+
+## ----summariseModel2c7, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5,echo=TRUE----
+quinn.brmsNB %>%
+    gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY.*`, regex=TRUE) %>%
+    ggplot() + 
+    geom_density_ridges(aes(x=.value, y = .variable), alpha=0.4) +
+    geom_vline(xintercept = 0, linetype = 'dashed')
+##Or on a fractional scale
+quinn.brmsNB %>%
+    gather_draws(`.Intercept.*|.*SEASON.*|.*DENSITY.*`, regex=TRUE) %>%
+    ggplot() + 
+    geom_density_ridges_gradient(aes(x=exp(.value),
+                                     y = .variable,
+                                     fill = stat(x)),
+                                 alpha=0.4, colour = 'white',
+                                 quantile_lines = TRUE,
+                                 quantiles = c(0.025, 0.975)) +
+    geom_vline(xintercept = 1, linetype = 'dashed') +
+    scale_x_continuous(trans = scales::log2_trans()) +
+    scale_fill_viridis_c(option = "C")
+
+
 ## ----summariseModel2d, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 quinn.brmsNB %>% tidy_draws()
 
@@ -631,6 +982,33 @@ quinn.brmsNB %>% posterior_samples() %>% as_tibble()
 
 ## ----summariseModel2g, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
 quinn.brmsNB %>% bayes_R2(summary=FALSE) %>% median_hdci
+
+
+## ----summariseModel2k, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=5----
+0.1 * log(sd(quinn$RECRUITS))
+quinn.brmsNB %>% rope(range = c(-0.28, 0.28))
+rope(quinn.brmsNB, range = c(-0.28, 0.28)) %>% plot()
+
+## Or based on fractional scale
+quinn.brmsNB %>%
+    as_draws_df('^b_SEASON.*|^b_DENSITY.*', regex = TRUE) %>%
+    exp() %>% 
+    ## equivalence_test(range = c(0.755, 1.32))
+    rope(range = c(0.755, 1.32))
+quinn.mcmc <-
+    quinn.brmsNB %>%
+    as_draws_df('^b_SEASON.*|^b_DENSITY.*', regex = TRUE) %>%
+    exp()
+quinn.mcmc %>%
+    rope(range = c(0.755, 1.32))
+## note, the following is not quit correct, it does not get the CI correct
+quinn.mcmc %>%
+    rope(range = c(0.755, 1.32)) %>%
+    plot(data = quinn.brmsNB)
+
+
+quinn.mcmc %>%
+    equivalence_test(quinn.mcmc, range = c(0.755, 1.32)) 
 
 
 ## ----mainEffects1a, results='markdown', eval=TRUE, hidden=TRUE----------------
@@ -674,6 +1052,16 @@ quinn.em %>% group_by(contrast,SEASON) %>% summarize(P=sum(Fit>1)/n())
 ##Probability of effect greater than 10%
 quinn.em %>% group_by(contrast,SEASON) %>% summarize(P=sum(Fit>1.1)/n())
 
+## Using summarise_draws
+quinn.rstanarmNB %>%
+    emmeans(~DENSITY|SEASON, type='link') %>%
+    pairs() %>%
+    tidy_draws() %>%
+    exp() %>%
+    summarise_draws(median,
+                    HDInterval::hdi,
+                    P = ~ sum(.x > 1)/length(.x)
+                    )
 
 
 ## ----mainEffects1c, results='markdown', eval=TRUE, hidden=TRUE----------------
