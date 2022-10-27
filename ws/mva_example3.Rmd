@@ -1,0 +1,143 @@
+---
+title: "Multivariate analysis - Metric and Non-metric Multidimensional Scaling"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../resources/references.bib
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE}
+library(tidyverse)  #for data wrangling etc
+library(vegan)
+library(ggvegan)
+library(ggrepel)
+library(GGally)
+library(corrplot)
+library(mvabund)
+library(gllvm)
+library(EcolUtils)
+library(car)
+library(glmmTMB)
+library(scales)
+```
+
+
+# Scenario
+
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+macnally <- read.csv('../data/macnally_full.csv',strip.white=TRUE)
+head(macnally)
+macnally[1:5,1:5]
+```
+
+
+# PCoA
+
+
+
+
+# MetaMDS {.tabset .tabset-faded}
+
+## MDS
+
+
+## Stress plot
+
+
+## Autoplot
+
+
+## Manually
+
+
+## Envfit
+
+
+## Simper
+
+Similarity percentage: decomposition of Bray-Curtis index
+into contributions of each species to average between-group
+dissim.
+
+Pairwise displays most important species for each pair.
+Caused by variation in species abundances and only partly
+by differences among groups.
+So driven by most abundant species.
+
+
+## Adonis (permutation anova)
+
+
+## betadisper
+
+betadisp = PERMDISP2
+
+Analysis of multivariate homogeneity of group dispersions
+(variances) - test for homogeneity of variance to test whether the
+dispersions (variances) of one or more groups are differnt, the
+distances of group memebers to the group centroid are subject to
+ANOVA.
+
+
+
+Now with bias correction
+
+Use the spatial median rather than the centroid (default)
+
+If the median or centroid is calculated from the same data as then used to calculate dispersion,
+dispersion will be biased downwards (less dispersion)
+
+Adjust for small sample bias (default is false)
+can also be biased by unequal sample sizes
+good idea to correct for bias when sample sizes are small or uneven
+
+
+# References

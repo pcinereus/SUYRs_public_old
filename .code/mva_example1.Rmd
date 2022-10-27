@@ -1,0 +1,604 @@
+---
+title: "Multivariate analysis - PCA and RDA"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../public/resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../public/resources/references.bib
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+```
+
+# Options
+
+
+```
+############################################################
+##             RDA (Linear ordination, Correlations, Euclidean distance)
+##             rda()
+##            /  \                              
+##Unconstrained   Constrained ---> ordination                    
+##   (PCA)            (RDA)   ---> anova
+##
+##             tb-RDA (Transformation-based ordination, Hellinger distance)
+##             rda()
+##            /  \                              
+##Unconstrained   Constrained ---> ordination                    
+##   (PCA)            (RDA)   ---> anova
+##
+##              CA (Unimodal ordination, Chisq distance)
+##              cca()
+##             /  \
+##Unconstrained   Constrained ---> ordination
+## (CA)             (CCA)     ---> anova
+##
+##              DCA (Unimodal ordination, Chisq distance)
+##             decorana()
+##             /  \
+##Unconstrained   Constrained ---> ordination
+## (DCA)             (DCCA)     ---> anova
+##
+##             PCoA, dbRDA (metric MDS, any distance)
+##             capscale()
+##             /  \
+##Unconstrained   Constrained ---> ordination
+##                            ---> anova
+##
+##Unconstrained  ---> ordination
+##               ---> envfit (overlay enviromental data) (permutation test)
+##               ---> lm/glm etc (response or predictor)
+#############################################################
+##     Dissimilarity
+##            --> MDS/nMDS      ---> ordination
+##            --> bioenv   ---> variable importance       (perm test)
+##            --> adonis2* ---> anova                     (perm test)
+##            --> simper   ---> similarity percentages
+##            --- betadisp ---> homogeneity of dispersion (perm test)
+#############################################################
+##     Model based ordination
+##            ---> glmmTMB (via reduced rank / latent variable)
+##            ---> gllvm (generalised latent variable models)
+#############################################################
+##     Model based
+##            ---> manyglm ---> anova
+##            ---> gllvm (generalized latent variable models)
+#############################################################
+```
+
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE}
+library(tidyverse)  #for data wrangling etc
+library(vegan)
+library(ggvegan)
+library(ggrepel)
+library(GGally)
+library(corrplot)
+library(EcolUtils)
+library(car)
+library(scales)
+library(patchwork)
+```
+
+
+# Scenario
+
+@vanDerArt-1975 was interested in the environmental drivers of hunting spider distributions within dunal habitats in the Netherlands.  To explore, this, they measured the abundance of 12 species of hunting spider from 28 sites along a number of environmental gradients.
+
+We will explore the patterns of hunting spider species composition
+using **linear** ordination techniques.  These are linear as they
+assume that the individual abundances change in a linear manner over
+an environmental gradient.
+	
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+spider.abund <- read_csv(file = "../public/data/spider.abund.csv", trim_ws = TRUE)
+spider.abund %>% glimpse()
+```
+
+# Exploratory data analysis {.tabset .tabset-faded}
+
+<div>
+## correlation plots
+
+```{r EDA, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.abund %>%
+    cor %>%
+    corrplot(type = 'upper',
+             diag = FALSE)
+## And now with axes arrange according to first princomp
+spider.abund %>%
+    cor %>%
+    corrplot(type = 'upper',
+             order = 'FPC',
+             diag = FALSE)
+```
+
+## Scatterplot matrices
+
+```{r EDA1, results='markdown', cache = TRUE, eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.abund %>%
+    ggpairs(lower = list(continuous = "smooth"),
+            diag = list(continuous = "density"),
+            axisLabels = "show")
+## - clearly not normal
+
+spider.abund^0.25 %>%
+    ggpairs(lower = list(continuous = "smooth"),
+            diag = list(continuous = "density"),
+            axisLabels = "show")
+## - still not normal
+```
+
+## DCA (detrended correspondance analysis)
+
+```{r DCA, results='markdown', cache = TRUE, eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.dca <- decorana(spider.abund^0.25)
+spider.dca
+```
+
+</div>
+
+**Conclusions:**
+    
+There is evidence of non-normality and non-linearity although we could
+attempt to normalize via sqrt transform, this is unlikely to fix
+all.vars linearity also not good. It is likely that these issues are
+the result of the sampling occuring over a larger scale than the
+natural range of the taxa.  This will result in some species being
+left skewed and others being right skewed. It will also result in
+non-linearity and the horseshoe effect.
+
+Technically, these techniques also assume homogeneity of variance.
+However, it is not possible to explore residuals from these techniques.
+    
+Evidence of linearity and non-normality
+Solutions:
+
+- Metric ordination
+1. PCA - ignore at own peril
+2. hellinger trasformation (tb-PCA)
+3. CA (CCA)
+4. Distance-based RDA (capscale)
+- Non-metric
+5. nMDS
+
+# Scaling/transformations
+
+```{r scaling, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.abund %>% head
+
+## Standardize columns to maximums
+spider.abund %>%
+    head() %>% 
+    decostand(method = "max", MARGIN = 2) 
+
+## spider.abund %>%
+##     head() %>% 
+##     decostand(method = "range", MARGIN = 2) 
+
+## spider.abund %>%
+##     head() %>% 
+##     decostand(method = "normalize", MARGIN = 2) 
+
+## Standardize rows to totals
+spider.abund %>%
+    head() %>% 
+    decostand(method = "total", MARGIN = 1) 
+
+## Double standardization
+spider.abund %>%
+    head() %>% 
+    wisconsin() 
+
+## Transformations
+spider.abund %>%
+    sqrt() %>%
+    head() %>% 
+    wisconsin() 
+
+```
+
+
+# PCA {.tabset .tabset-faded}
+
+## Raw data {.tabset .tabset-pills}
+
+```{r PCA1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.rda <- rda(spider.abund, scale=TRUE)
+summary(spider.rda, display=NULL)
+```
+
+### Screeplot
+```{r screePlot1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+screeplot(spider.rda)
+abline(a=1,b=0)
+```
+
+### Biplot
+
+```{r biplot, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+## Quick and nasty ordination plots
+biplot(spider.rda, scaling='species')
+biplot(spider.rda, scaling='sites')
+```
+
+### Ordiplot
+
+```{r biplot1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+## Quick and nasty ordination plots
+pl<-vegan::ordiplot(spider.rda)
+points(pl, "sites", pch=21, col="red", bg="yellow")
+text(pl, "sites", col="red", cex=0.9)
+text(pl, "species", col="blue", cex=0.9)
+## line(pl, "sites")
+```
+
+### Autoplot
+
+```{r biplot3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+## ggvegan provides ways to use ggplot
+## library(devtools)
+## devtools::install_github("gavinsimpson/ggvegan")
+## library(ggvegan)
+autoplot(spider.rda)
+autoplot(spider.rda) + theme_bw()
+autoplot(spider.rda,geom='text') + theme_bw()
+```
+
+### Manually
+
+```{r biplot4, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.rda.scores <- spider.rda %>%
+    fortify()
+spider.rda.scores
+
+g <-
+    ggplot(data = NULL, aes(y=PC2, x=PC1)) +
+    geom_hline(yintercept=0, linetype='dotted') +
+    geom_vline(xintercept=0, linetype='dotted') +
+    geom_point(data=spider.rda.scores %>% filter(Score=='sites')) +
+    geom_text(data=spider.rda.scores %>% filter(Score=='sites'),
+              aes(label=Label), hjust=-0.2) +
+    geom_segment(data=spider.rda.scores %>% filter(Score=='species'),
+                 aes(y=0, x=0, yend=PC2, xend=PC1),
+                 arrow=arrow(length=unit(0.3,'lines')), color='red') +
+    ## geom_text(data=spider.rda.scores %>% filter(Score=='species'),
+    ##           aes(y=PC2*1.1, x=PC1*1.1, label=Label), color='red') +
+    geom_text_repel(data=spider.rda.scores %>% filter(Score=='species'),
+                    aes(y=PC2*1.1, x=PC1*1.1, label=Label), color='red') +
+    theme_bw()
+g
+
+                                        # Nice axes titles
+eig <- eigenvals(spider.rda)
+
+paste(names(eig[2]), sprintf('(%0.1f%% explained var.)', 100 * eig[2]/sum(eig)))
+g <- g +
+    scale_y_continuous(paste(names(eig[2]), sprintf('(%0.1f%% explained var.)',
+                                                    100 * eig[2]/sum(eig))))+
+    scale_x_continuous(paste(names(eig[1]), sprintf('(%0.1f%% explained var.)',
+                                                    100 * eig[1]/sum(eig))))
+
+                                        #put a circle
+circle.prob <- 0.68
+## circle.prob <- 0.95
+## circle.prob <- 0.95
+r <- sqrt(qchisq(circle.prob, df = 2)) * prod(colMeans(spider.rda$CA$u[,1:2]^2))^(1/4)
+theta <- c(seq(-pi, pi, length = 50), seq(pi, -pi, length = 50))
+circle <- data.frame(PC1 = r * cos(theta), PC2 = r * sin(theta))
+g <- g + geom_path(data = circle, aes(y=PC2,x=PC1), color = muted('white'), size = 1/2, alpha = 1/3)
+g
+g1 <- g
+```
+
+## Standardized data {.tabset .tabset-pills}
+
+```{r PCA2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.std <- spider.abund %>%
+    mutate(across(everything(), function(x) x^0.25)) %>%
+    wisconsin()
+spider.std
+spider.rda <- rda(spider.std, scale=FALSE)
+summary(spider.rda, display=NULL)
+```
+
+### Manually
+
+```{r biplot5, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.rda.scores <- spider.rda %>%
+    fortify()
+spider.rda.scores
+
+g <-
+    ggplot(data = NULL, aes(y=PC2, x=PC1)) +
+    geom_hline(yintercept=0, linetype='dotted') +
+    geom_vline(xintercept=0, linetype='dotted') +
+    geom_point(data=spider.rda.scores %>% filter(Score=='sites')) +
+    geom_text(data=spider.rda.scores %>% filter(Score=='sites'),
+              aes(label=Label), hjust=-0.2) +
+    geom_segment(data=spider.rda.scores %>% filter(Score=='species'),
+                 aes(y=0, x=0, yend=PC2, xend=PC1),
+                 arrow=arrow(length=unit(0.3,'lines')), color='red') +
+    ## geom_text(data=spider.rda.scores %>% filter(Score=='species'),
+    ##           aes(y=PC2*1.1, x=PC1*1.1, label=Label), color='red') +
+    geom_text_repel(data=spider.rda.scores %>% filter(Score=='species'),
+                    aes(y=PC2*1.1, x=PC1*1.1, label=Label), color='red') +
+    theme_bw()
+g
+
+                                        # Nice axes titles
+eig <- eigenvals(spider.rda)
+
+paste(names(eig[2]), sprintf('(%0.1f%% explained var.)', 100 * eig[2]/sum(eig)))
+g <- g +
+    scale_y_continuous(paste(names(eig[2]), sprintf('(%0.1f%% explained var.)',
+                                                    100 * eig[2]/sum(eig))))+
+    scale_x_continuous(paste(names(eig[1]), sprintf('(%0.1f%% explained var.)',
+                                                    100 * eig[1]/sum(eig))))
+
+                                        #put a circle
+circle.prob <- 0.68
+## circle.prob <- 0.95
+## circle.prob <- 0.95
+r <- sqrt(qchisq(circle.prob, df = 2)) * prod(colMeans(spider.rda$CA$u[,1:2]^2))^(1/4)
+theta <- c(seq(-pi, pi, length = 50), seq(pi, -pi, length = 50))
+circle <- data.frame(PC1 = r * cos(theta), PC2 = r * sin(theta))
+g <- g + geom_path(data = circle, aes(y=PC2,x=PC1), color = muted('white'), size = 1/2, alpha = 1/3)
+g
+
+g2 <- g
+```
+
+## tb-PCA data {.tabset .tabset-pills}
+
+Transformation-based PCA
+
+```{r PCA3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.hel <- spider.abund %>%
+     decostand(method = "hellinger")
+spider.rda <- rda(spider.hel, scale=FALSE)
+summary(spider.rda, display=NULL)
+```
+### Manually
+
+```{r biplot6, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.rda.scores <- spider.rda %>%
+    fortify()
+spider.rda.scores
+
+g <-
+    ggplot(data = NULL, aes(y=PC2, x=PC1)) +
+    geom_hline(yintercept=0, linetype='dotted') +
+    geom_vline(xintercept=0, linetype='dotted') +
+    geom_point(data=spider.rda.scores %>% filter(Score=='sites')) +
+    geom_text(data=spider.rda.scores %>% filter(Score=='sites'),
+              aes(label=Label), hjust=-0.2) +
+    geom_segment(data=spider.rda.scores %>% filter(Score=='species'),
+                 aes(y=0, x=0, yend=PC2, xend=PC1),
+                 arrow=arrow(length=unit(0.3,'lines')), color='red') +
+    ## geom_text(data=spider.rda.scores %>% filter(Score=='species'),
+    ##           aes(y=PC2*1.1, x=PC1*1.1, label=Label), color='red') +
+    geom_text_repel(data=spider.rda.scores %>% filter(Score=='species'),
+                    aes(y=PC2*1.1, x=PC1*1.1, label=Label), color='red') +
+    theme_bw()
+g
+
+                                        # Nice axes titles
+eig <- eigenvals(spider.rda)
+
+paste(names(eig[2]), sprintf('(%0.1f%% explained var.)', 100 * eig[2]/sum(eig)))
+g <- g +
+    scale_y_continuous(paste(names(eig[2]), sprintf('(%0.1f%% explained var.)',
+                                                    100 * eig[2]/sum(eig))))+
+    scale_x_continuous(paste(names(eig[1]), sprintf('(%0.1f%% explained var.)',
+                                                    100 * eig[1]/sum(eig))))
+
+                                        #put a circle
+circle.prob <- 0.68
+## circle.prob <- 0.95
+## circle.prob <- 0.95
+r <- sqrt(qchisq(circle.prob, df = 2)) * prod(colMeans(spider.rda$CA$u[,1:2]^2))^(1/4)
+theta <- c(seq(-pi, pi, length = 50), seq(pi, -pi, length = 50))
+circle <- data.frame(PC1 = r * cos(theta), PC2 = r * sin(theta))
+g <- g + geom_path(data = circle, aes(y=PC2,x=PC1), color = muted('white'), size = 1/2, alpha = 1/3)
+g
+g3 <- g
+
+```
+
+
+
+## Comparison
+
+```{r comparison, results='markdown', eval=TRUE, hidden=TRUE, fig.width=21, fig.height=6, hidden=TRUE}
+g1 + g2 + g3
+```
+
+# Environmental fit (envfit) {.tabset .tabset-faded}
+
+## Read in the data
+
+```{r readData1, results='markdown', eval=TRUE}
+spider.env <- read_csv(file = "../public/data/spider.env.csv", trim_ws = TRUE)
+spider.env %>% glimpse()
+```
+
+## EDA
+
+```{r EDA4, results='markdown', eval=TRUE}
+spider.env %>%
+    as.data.frame() %>%
+    ggpairs(lower = list(continuous = "smooth"),
+            diag = list(continuous = "density"),
+            axisLabels = "show")
+```
+
+## envfit
+
+```{r envfit, results='markdown', eval=TRUE}
+spider.envfit <- envfit(spider.rda, env = spider.env)
+spider.envfit
+```
+
+```{r envfitPlot, results='markdown', eval=TRUE}
+spider.env.scores <- spider.envfit %>% fortify()
+g <- g + 
+    geom_segment(data=spider.env.scores,
+                 aes(y=0, x=0, yend=PC2, xend=PC1),
+                 arrow=arrow(length=unit(0.3,'lines')), color='blue') +
+    geom_text(data=spider.env.scores,
+              aes(y=PC2*1.1, x=PC1*1.1, label=Label), color='blue')
+g
+```
+
+# (Generalized) linear models
+
+Extract scores
+
+```{r lmExtract, results='markdown', eval=TRUE}
+pc1 <- spider.rda.scores %>% filter(Score=='sites') %>% pull(PC1)
+pc2 <- spider.rda.scores %>% filter(Score=='sites') %>% pull(PC2)
+```
+
+Test variance inflation
+
+```{r lmVIF, results='markdown', eval=TRUE}
+lm(1:nrow(spider.env) ~ soil.dry + bare.sand + fallen.leaves +
+       moss + herb.layer + reflection, data=spider.env) %>%
+    vif()
+lm(1:nrow(spider.env) ~ herb.layer + fallen.leaves +
+       bare.sand + moss, data=spider.env) %>%
+    vif()
+```
+
+```{r lmfit, results='markdown', eval=TRUE}
+lm(pc1 ~ herb.layer + fallen.leaves + bare.sand + moss, data=spider.env) %>%
+    summary()
+lm(pc2 ~ herb.layer + fallen.leaves + bare.sand + moss, data=spider.env) %>%
+    summary()
+
+```
+
+# Redundancy Analysis (RDA) {.tabset .tabset-faded}
+
+Constrained PCA
+
+## Prepare data
+
+```{r RDA1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.std <- spider.abund %>%
+    mutate(across(everything(), function(x) x^0.25)) %>%
+    wisconsin()
+spider.std
+```
+
+## Fit RDA
+
+```{r RDA, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.rda <- rda(spider.std ~ 
+                      scale(herb.layer)+
+                      scale(fallen.leaves) +
+                      scale(bare.sand) +
+                      scale(moss),
+                  data=spider.env, scale=FALSE)
+```
+
+## Explore RDA
+
+```{r RDA1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+vif.cca(spider.rda)
+summary(spider.rda, display=NULL)
+```
+
+## Validation (goodness of fit)
+
+Goodness of fit test
+
+Cumulative proportion of inertia accounted for (explained) by species
+(or sites) up to the chosen RDA axes.
+
+Often used to remove species from ordination (those not well fit).
+
+```{r RDA2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+goodness(spider.rda, display = "species")
+goodness(spider.rda, display = "sites")
+```
+
+
+Proportion of inertia explained (decomposed) by constrained and
+unconstrained
+
+```{r RDA3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+inertcomp(spider.rda)
+## or proportionally
+inertcomp(spider.rda, proportional = TRUE)
+```
+
+## Anova
+
+```{r RDA4, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+##overall test
+anova(spider.rda)
+#By axes
+anova(spider.rda, by='axis')
+#By covariate
+anova(spider.rda, by='margin')
+```
+
+## Ordination plot
+
+```{r RDA4a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+autoplot(spider.rda, geom='text') +
+    theme_bw()
+```
+
+## R2
+
+```{r RDA5, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+RsquareAdj(spider.rda)
+```
+
+# References

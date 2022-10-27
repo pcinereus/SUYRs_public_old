@@ -1,0 +1,322 @@
+---
+title: "Multivariate analysis - PCA and RDA"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../resources/references.bib
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+```
+
+# Options
+
+
+```
+############################################################
+##             RDA (Linear ordination, Correlations, Euclidean distance)
+##             rda()
+##            /  \                              
+##Unconstrained   Constrained ---> ordination                    
+##   (PCA)            (RDA)   ---> anova
+##
+##             tb-RDA (Transformation-based ordination, Hellinger distance)
+##             rda()
+##            /  \                              
+##Unconstrained   Constrained ---> ordination                    
+##   (PCA)            (RDA)   ---> anova
+##
+##              CA (Unimodal ordination, Chisq distance)
+##              cca()
+##             /  \
+##Unconstrained   Constrained ---> ordination
+## (CA)             (CCA)     ---> anova
+##
+##              DCA (Unimodal ordination, Chisq distance)
+##             decorana()
+##             /  \
+##Unconstrained   Constrained ---> ordination
+## (DCA)             (DCCA)     ---> anova
+##
+##             PCoA, dbRDA (metric MDS, any distance)
+##             capscale()
+##             /  \
+##Unconstrained   Constrained ---> ordination
+##                            ---> anova
+##
+##Unconstrained  ---> ordination
+##               ---> envfit (overlay enviromental data) (permutation test)
+##               ---> lm/glm etc (response or predictor)
+#############################################################
+##     Dissimilarity
+##            --> MDS/nMDS      ---> ordination
+##            --> bioenv   ---> variable importance       (perm test)
+##            --> adonis2* ---> anova                     (perm test)
+##            --> simper   ---> similarity percentages
+##            --- betadisp ---> homogeneity of dispersion (perm test)
+#############################################################
+##     Model based ordination
+##            ---> glmmTMB (via reduced rank / latent variable)
+##            ---> gllvm (generalised latent variable models)
+#############################################################
+##     Model based
+##            ---> manyglm ---> anova
+##            ---> gllvm (generalized latent variable models)
+#############################################################
+```
+
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE}
+library(tidyverse)  #for data wrangling etc
+library(vegan)
+library(ggvegan)
+library(ggrepel)
+library(GGally)
+library(corrplot)
+library(EcolUtils)
+library(car)
+library(scales)
+library(patchwork)
+```
+
+
+# Scenario
+
+@vanDerArt-1975 was interested in the environmental drivers of hunting spider distributions within dunal habitats in the Netherlands.  To explore, this, they measured the abundance of 12 species of hunting spider from 28 sites along a number of environmental gradients.
+
+We will explore the patterns of hunting spider species composition
+using **linear** ordination techniques.  These are linear as they
+assume that the individual abundances change in a linear manner over
+an environmental gradient.
+	
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+spider.abund <- read_csv(file = "../data/spider.abund.csv", trim_ws = TRUE)
+spider.abund %>% glimpse()
+```
+
+# Exploratory data analysis {.tabset .tabset-faded}
+
+<div>
+## correlation plots
+
+
+## Scatterplot matrices
+
+
+## DCA (detrended correspondance analysis)
+
+
+</div>
+
+**Conclusions:**
+    
+There is evidence of non-normality and non-linearity although we could
+attempt to normalize via sqrt transform, this is unlikely to fix
+all.vars linearity also not good. It is likely that these issues are
+the result of the sampling occuring over a larger scale than the
+natural range of the taxa.  This will result in some species being
+left skewed and others being right skewed. It will also result in
+non-linearity and the horseshoe effect.
+
+Technically, these techniques also assume homogeneity of variance.
+However, it is not possible to explore residuals from these techniques.
+    
+Evidence of linearity and non-normality
+Solutions:
+
+- Metric ordination
+1. PCA - ignore at own peril
+2. hellinger trasformation (tb-PCA)
+3. CA (CCA)
+4. Distance-based RDA (capscale)
+- Non-metric
+5. nMDS
+
+# Scaling/transformations
+
+
+
+# PCA {.tabset .tabset-faded}
+
+## Raw data {.tabset .tabset-pills}
+
+
+### Screeplot
+
+### Biplot
+
+
+### Ordiplot
+
+
+### Autoplot
+
+
+### Manually
+
+
+## Standardized data {.tabset .tabset-pills}
+
+
+### Manually
+
+
+## tb-PCA data {.tabset .tabset-pills}
+
+Transformation-based PCA
+
+### Manually
+
+
+
+
+## Comparison
+
+
+# Environmental fit (envfit) {.tabset .tabset-faded}
+
+## Read in the data
+
+```{r readData1, results='markdown', eval=TRUE}
+spider.env <- read_csv(file = "../data/spider.env.csv", trim_ws = TRUE)
+spider.env %>% glimpse()
+```
+
+## EDA
+
+```{r EDA4, results='markdown', eval=TRUE}
+spider.env %>%
+    as.data.frame() %>%
+    ggpairs(lower = list(continuous = "smooth"),
+            diag = list(continuous = "density"),
+            axisLabels = "show")
+```
+
+## envfit
+
+```{r envfit, results='markdown', eval=TRUE}
+spider.envfit <- envfit(spider.rda, env = spider.env)
+spider.envfit
+```
+
+```{r envfitPlot, results='markdown', eval=TRUE}
+spider.env.scores <- spider.envfit %>% fortify()
+g <- g + 
+    geom_segment(data=spider.env.scores,
+                 aes(y=0, x=0, yend=PC2, xend=PC1),
+                 arrow=arrow(length=unit(0.3,'lines')), color='blue') +
+    geom_text(data=spider.env.scores,
+              aes(y=PC2*1.1, x=PC1*1.1, label=Label), color='blue')
+g
+```
+
+# (Generalized) linear models
+
+Extract scores
+
+```{r lmExtract, results='markdown', eval=TRUE}
+pc1 <- spider.rda.scores %>% filter(Score=='sites') %>% pull(PC1)
+pc2 <- spider.rda.scores %>% filter(Score=='sites') %>% pull(PC2)
+```
+
+Test variance inflation
+
+```{r lmVIF, results='markdown', eval=TRUE}
+lm(1:nrow(spider.env) ~ soil.dry + bare.sand + fallen.leaves +
+       moss + herb.layer + reflection, data=spider.env) %>%
+    vif()
+lm(1:nrow(spider.env) ~ herb.layer + fallen.leaves +
+       bare.sand + moss, data=spider.env) %>%
+    vif()
+```
+
+```{r lmfit, results='markdown', eval=TRUE}
+lm(pc1 ~ herb.layer + fallen.leaves + bare.sand + moss, data=spider.env) %>%
+    summary()
+lm(pc2 ~ herb.layer + fallen.leaves + bare.sand + moss, data=spider.env) %>%
+    summary()
+
+```
+
+# Redundancy Analysis (RDA) {.tabset .tabset-faded}
+
+Constrained PCA
+
+## Prepare data
+
+
+## Fit RDA
+
+
+## Explore RDA
+
+
+## Validation (goodness of fit)
+
+Goodness of fit test
+
+Cumulative proportion of inertia accounted for (explained) by species
+(or sites) up to the chosen RDA axes.
+
+Often used to remove species from ordination (those not well fit).
+
+
+
+Proportion of inertia explained (decomposed) by constrained and
+unconstrained
+
+
+## Anova
+
+
+## Ordination plot
+
+
+## R2
+
+
+# References

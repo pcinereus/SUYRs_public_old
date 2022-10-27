@@ -1,0 +1,312 @@
+---
+title: "Multivariate analysis - CA, DCA and CCA"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../public/resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../public/resources/references.bib
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE}
+library(tidyverse)  #for data wrangling etc
+library(vegan)
+library(ggvegan)
+library(ggrepel)
+library(GGally)
+library(corrplot)
+library(mvabund)
+library(gllvm)
+library(EcolUtils)
+library(car)
+library(glmmTMB)
+library(scales)
+```
+
+
+# Scenario
+
+@vanDerArt-1975 was interested in the environmental drivers of hunting spider distributions within dunal habitats in the Netherlands.  To explore, this, they measured the abundance of 12 species of hunting spider from 28 sites along a number of environmental gradients.
+
+We will explore the patterns of hunting spider species composition
+using **unimodal** ordination techniques.  These are unimodal as they
+allow the individual abundances change in a unimodal (over a gradient,
+abundances will increase to a peak before falling again).
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+spider.abund <- read_csv(file = "../public/data/spider.abund.csv", trim_ws = TRUE)
+spider.abund %>% glimpse()
+```
+
+# CA {.tabset .tabset-faded}
+
+## Prepare data {.tabset .tabset-pills}
+
+```{r CA1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.std <- spider.abund %>%
+    decostand(method="total",MARGIN=2)
+spider.std
+```
+
+## Fit CA
+
+```{r CA1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.ca <- cca(spider.std, scale=FALSE)
+summary(spider.ca, display=NULL)
+```
+
+## Screeplot
+```{r screePlot1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+screeplot(spider.ca)
+sum(eigenvals(spider.ca))/length(eigenvals(spider.ca))
+eigenvals(spider.ca)/sum(eigenvals(spider.ca))
+```
+
+### Autoplot
+
+```{r biplot3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+## ggvegan provides ways to use ggplot
+## library(devtools)
+## devtools::install_github("gavinsimpson/ggvegan")
+## library(ggvegan)
+autoplot(spider.ca)
+autoplot(spider.ca) + theme_bw()
+autoplot(spider.ca,geom='text') + theme_bw()
+```
+
+### Manually
+
+```{r biplot4, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.ca.scores <- spider.ca %>%
+    fortify()
+spider.ca.scores
+
+g <-
+    ggplot(data = NULL, aes(y=CA2, x=CA1)) +
+    geom_hline(yintercept=0, linetype='dotted') +
+    geom_vline(xintercept=0, linetype='dotted') +
+    geom_point(data=spider.ca.scores %>% filter(Score=='sites')) +
+    geom_text(data=spider.ca.scores %>% filter(Score=='sites'),
+              aes(label=Label), hjust=-0.2) +
+    geom_segment(data=spider.ca.scores %>% filter(Score=='species'),
+                 aes(y=0, x=0, yend=CA2, xend=CA1),
+                 arrow=arrow(length=unit(0.3,'lines')), color='red') +
+    ## geom_text(data=spider.ca.scores %>% filter(Score=='species'),
+    ##           aes(y=PC2*1.1, x=PC1*1.1, label=Label), color='red') +
+    geom_text_repel(data=spider.ca.scores %>% filter(Score=='species'),
+                    aes(y=CA2*1.1, x=CA1*1.1, label=Label), color='red') +
+    theme_bw()
+g
+
+                                        # Nice axes titles
+eig <- eigenvals(spider.ca)
+
+paste(names(eig[2]), sprintf('(%0.1f%% explained var.)', 100 * eig[2]/sum(eig)))
+g <- g +
+    scale_y_continuous(paste(names(eig[2]), sprintf('(%0.1f%% explained var.)',
+                                                    100 * eig[2]/sum(eig))))+
+    scale_x_continuous(paste(names(eig[1]), sprintf('(%0.1f%% explained var.)',
+                                                    100 * eig[1]/sum(eig))))
+
+                                        #put a circle
+circle.prob <- 0.68
+## circle.prob <- 0.95
+## circle.prob <- 0.95
+r <- sqrt(qchisq(circle.prob, df = 2)) * prod(colMeans(spider.ca$CA$u[,1:2]^2))^(1/4)
+theta <- c(seq(-pi, pi, length = 50), seq(pi, -pi, length = 50))
+circle <- data.frame(CA1 = r * cos(theta), CA2 = r * sin(theta))
+g <- g + geom_path(data = circle, aes(y=CA2,x=CA1), color = muted('white'), size = 1/2, alpha = 1/3)
+g
+
+```
+
+
+# Environmental fit (envfit) {.tabset .tabset-faded}
+
+## Read in the data
+
+```{r readData1, results='markdown', eval=TRUE}
+spider.env <- read_csv(file = "../public/data/spider.env.csv", trim_ws = TRUE)
+spider.env %>% glimpse()
+```
+
+## EDA
+
+```{r EDA4, results='markdown', eval=TRUE}
+spider.env %>%
+    as.data.frame() %>%
+    ggpairs(lower = list(continuous = "smooth"),
+            diag = list(continuous = "density"),
+            axisLabels = "show")
+```
+
+## envfit
+
+```{r envfit, results='markdown', eval=TRUE}
+spider.envfit <- envfit(spider.ca, env = spider.env)
+spider.envfit
+```
+
+```{r envfitPlot, results='markdown', eval=TRUE}
+spider.env.scores <- spider.envfit %>% fortify()
+g <- g + 
+    geom_segment(data=spider.env.scores,
+                 aes(y=0, x=0, yend=CA2, xend=CA1),
+                 arrow=arrow(length=unit(0.3,'lines')), color='blue') +
+    geom_text(data=spider.env.scores,
+              aes(y=CA2*1.1, x=CA1*1.1, label=Label), color='blue')
+g
+```
+
+# (Generalized) linear models
+
+Extract scores
+
+```{r lmExtract, results='markdown', eval=TRUE}
+pc1 <- spider.ca.scores %>% filter(Score=='sites') %>% pull(CA1)
+pc2 <- spider.ca.scores %>% filter(Score=='sites') %>% pull(CA2)
+```
+
+Test variance inflation
+
+```{r lmVIF, results='markdown', eval=TRUE}
+lm(1:nrow(spider.env) ~ soil.dry + bare.sand + fallen.leaves +
+       moss + herb.layer + reflection, data=spider.env) %>%
+    vif()
+lm(1:nrow(spider.env) ~ herb.layer + fallen.leaves +
+       bare.sand + moss, data=spider.env) %>%
+    vif()
+```
+
+```{r lmfit, results='markdown', eval=TRUE}
+lm(pc1 ~ herb.layer + fallen.leaves + bare.sand + moss, data=spider.env) %>%
+    summary()
+lm(pc2 ~ herb.layer + fallen.leaves + bare.sand + moss, data=spider.env) %>%
+    summary()
+
+```
+
+# Redundancy Analysis (RDA) {.tabset .tabset-faded}
+
+Constrained PCA
+
+## Prepare data
+
+```{r CCA1, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.std <- spider.abund %>%
+    decostand(method="total",MARGIN=2)
+spider.std
+```
+
+## Fit CCA
+
+```{r CCA, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+spider.cca <- cca(spider.std ~ 
+                      scale(herb.layer)+
+                      scale(fallen.leaves) +
+                      scale(bare.sand) +
+                      scale(moss),
+                  data=spider.env, scale=FALSE)
+```
+
+## Explore CCA
+
+```{r CCA1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+vif.cca(spider.cca)
+summary(spider.cca, display=NULL)
+```
+
+## Validation (goodness of fit)
+
+Goodness of fit test
+
+Cumulative proportion of inertia accounted for (explained) by species
+(or sites) up to the chosen CCA axes.
+
+Often used to remove species from ordination (those not well fit).
+
+```{r CCA2, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+goodness(spider.cca, display = "species")
+goodness(spider.cca, display = "sites")
+```
+
+
+Proportion of inertia explained (decomposed) by constrained and
+unconstrained
+
+```{r CCA3, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+inertcomp(spider.cca)
+## or proportionally
+inertcomp(spider.cca, proportional = TRUE)
+```
+
+## Anova
+
+```{r CCA4, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+##overall test
+anova(spider.cca)
+#By axes
+anova(spider.cca, by='axis')
+#By covariate
+anova(spider.cca, by='margin')
+```
+
+## Ordination plot
+
+```{r CCA4a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+autoplot(spider.cca, geom='text') +
+    theme_bw()
+```
+
+## R2
+
+```{r CCA5, results='markdown', eval=TRUE, hidden=TRUE, fig.width=6, fig.height=6, hidden=TRUE}
+RsquareAdj(spider.cca)
+```
+
+# References

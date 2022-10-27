@@ -1,0 +1,205 @@
+---
+title: "Multivariate analysis - CA, DCA and CCA"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../resources/ws_style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../resources/references.bib
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE}
+library(tidyverse)  #for data wrangling etc
+library(vegan)
+library(ggvegan)
+library(ggrepel)
+library(GGally)
+library(corrplot)
+library(mvabund)
+library(gllvm)
+library(EcolUtils)
+library(car)
+library(glmmTMB)
+library(scales)
+```
+
+
+# Scenario
+
+@vanDerArt-1975 was interested in the environmental drivers of hunting spider distributions within dunal habitats in the Netherlands.  To explore, this, they measured the abundance of 12 species of hunting spider from 28 sites along a number of environmental gradients.
+
+We will explore the patterns of hunting spider species composition
+using **unimodal** ordination techniques.  These are unimodal as they
+allow the individual abundances change in a unimodal (over a gradient,
+abundances will increase to a peak before falling again).
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+spider.abund <- read_csv(file = "../data/spider.abund.csv", trim_ws = TRUE)
+spider.abund %>% glimpse()
+```
+
+# CA {.tabset .tabset-faded}
+
+## Prepare data {.tabset .tabset-pills}
+
+
+## Fit CA
+
+
+## Screeplot
+
+### Autoplot
+
+
+### Manually
+
+
+
+# Environmental fit (envfit) {.tabset .tabset-faded}
+
+## Read in the data
+
+```{r readData1, results='markdown', eval=TRUE}
+spider.env <- read_csv(file = "../data/spider.env.csv", trim_ws = TRUE)
+spider.env %>% glimpse()
+```
+
+## EDA
+
+```{r EDA4, results='markdown', eval=TRUE}
+spider.env %>%
+    as.data.frame() %>%
+    ggpairs(lower = list(continuous = "smooth"),
+            diag = list(continuous = "density"),
+            axisLabels = "show")
+```
+
+## envfit
+
+```{r envfit, results='markdown', eval=TRUE}
+spider.envfit <- envfit(spider.ca, env = spider.env)
+spider.envfit
+```
+
+```{r envfitPlot, results='markdown', eval=TRUE}
+spider.env.scores <- spider.envfit %>% fortify()
+g <- g + 
+    geom_segment(data=spider.env.scores,
+                 aes(y=0, x=0, yend=CA2, xend=CA1),
+                 arrow=arrow(length=unit(0.3,'lines')), color='blue') +
+    geom_text(data=spider.env.scores,
+              aes(y=CA2*1.1, x=CA1*1.1, label=Label), color='blue')
+g
+```
+
+# (Generalized) linear models
+
+Extract scores
+
+```{r lmExtract, results='markdown', eval=TRUE}
+pc1 <- spider.ca.scores %>% filter(Score=='sites') %>% pull(CA1)
+pc2 <- spider.ca.scores %>% filter(Score=='sites') %>% pull(CA2)
+```
+
+Test variance inflation
+
+```{r lmVIF, results='markdown', eval=TRUE}
+lm(1:nrow(spider.env) ~ soil.dry + bare.sand + fallen.leaves +
+       moss + herb.layer + reflection, data=spider.env) %>%
+    vif()
+lm(1:nrow(spider.env) ~ herb.layer + fallen.leaves +
+       bare.sand + moss, data=spider.env) %>%
+    vif()
+```
+
+```{r lmfit, results='markdown', eval=TRUE}
+lm(pc1 ~ herb.layer + fallen.leaves + bare.sand + moss, data=spider.env) %>%
+    summary()
+lm(pc2 ~ herb.layer + fallen.leaves + bare.sand + moss, data=spider.env) %>%
+    summary()
+
+```
+
+# Redundancy Analysis (RDA) {.tabset .tabset-faded}
+
+Constrained PCA
+
+## Prepare data
+
+
+## Fit CCA
+
+
+## Explore CCA
+
+
+## Validation (goodness of fit)
+
+Goodness of fit test
+
+Cumulative proportion of inertia accounted for (explained) by species
+(or sites) up to the chosen CCA axes.
+
+Often used to remove species from ordination (those not well fit).
+
+
+
+Proportion of inertia explained (decomposed) by constrained and
+unconstrained
+
+
+## Anova
+
+
+## Ordination plot
+
+
+## R2
+
+
+# References
